@@ -527,15 +527,38 @@ if port_up "$P9R"; then ok "9Router listen di $P9R"
 else warn "9Router belum listen di $P9R"; fi
 
 # Prove the worker key is actually accepted. Both units can report "active"
-# while every request 401s (a key minted into the wrong keys.json), so assert
-# the credential end-to-end instead of trusting the unit state.
+# while every request 401s (worker.env holding a key that was minted into the
+# wrong keys.json). Assert the credential end-to-end, and REPAIR on 401 —
+# re-running alone would not help, because the bootstrap reuses the same bad
+# key from worker.env. Self-heal has to actually heal.
 if [ -n "${WKEY_FINAL:-}" ]; then
   AUTH_CODE="$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 \
     -H "Authorization: Bearer $WKEY_FINAL" \
     "http://127.0.0.1:$PBRG/muse/pending" 2>/dev/null || echo 000)"
   case "$AUTH_CODE" in
     200) ok "worker key diterima bridge (auth OK)" ;;
-    401) warn "worker key DITOLAK bridge (401) — jalankan ulang; keys.json tidak sinkron" ;;
+    401)
+      warn "worker key DITOLAK (401) — terbitkan ulang & sinkronkan worker.env"
+      NEW_WKEY="$(_keygen worker "muse-vm-heal-$(date +%Y%m%d%H%M%S)")"
+      if [ -n "$NEW_WKEY" ]; then
+        # Rewrite only the key line; leave every other knob (UPSTREAM, ports) as-is.
+        if sed -i "s|^BRIDGE_WORKER_KEY=.*|BRIDGE_WORKER_KEY=$NEW_WKEY|" "$ENV_FILE" 2>/dev/null; then
+          chmod 600 "$ENV_FILE"
+          [ "$HAVE_SYSTEMD" = 1 ] && force_restart muse-worker
+          sleep 2
+          RETRY="$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 \
+            -H "Authorization: Bearer $NEW_WKEY" \
+            "http://127.0.0.1:$PBRG/muse/pending" 2>/dev/null || echo 000)"
+          if [ "$RETRY" = 200 ]; then ok "worker key diperbaiki — auth OK"
+          else warn "perbaikan belum berhasil (HTTP $RETRY) — cek worker.env vs keys.json"; fi
+          CHANGED=1
+        else
+          warn "gagal menulis ulang $ENV_FILE"
+        fi
+      else
+        warn "gagal menerbitkan worker key pengganti"
+      fi
+      ;;
     000) warn "auth belum bisa diuji (bridge tidak menjawab)" ;;
     *)   warn "auth tidak terduga: HTTP $AUTH_CODE" ;;
   esac
