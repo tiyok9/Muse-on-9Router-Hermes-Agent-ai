@@ -2,7 +2,7 @@ Bangun ulang stack Muse di VM ini, mandiri, dalam satu perintah.
 
 Jalankan:
 
-  curl -fsSL https://raw.githubusercontent.com/Kutuyyy/Muse-on-9Router-Hermes-Agent-ai/main/muse-bootstrap.sh | bash
+  curl -fsSL https://raw.githubusercontent.com/tiyok9/Muse-on-9Router-Hermes-Agent-ai/main/muse-bootstrap.sh | bash
 
 Itu saja. Script itu idempoten — aman dijalankan berkali-kali, dan setiap langkah
 melewati dirinya sendiri kalau sudah beres.

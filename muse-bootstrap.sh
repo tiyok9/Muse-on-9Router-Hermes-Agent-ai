@@ -24,7 +24,7 @@
 #   MUSE_RELAY_PORT relay port to publish on              (default: 8765)
 set -euo pipefail
 
-REPO_RAW="${MUSE_REPO_RAW:-https://raw.githubusercontent.com/Kutuyyy/Muse-on-9Router-Hermes-Agent-ai/main}"
+REPO_RAW="${MUSE_REPO_RAW:-https://raw.githubusercontent.com/tiyok9/Muse-on-9Router-Hermes-Agent-ai/main}"
 BRIDGE_DIR="${MUSE_BRIDGE_DIR:-$HOME/muse-bridge}"
 QUEUE_DIR="$BRIDGE_DIR/queue"
 KEYS_FILE="$BRIDGE_DIR/keys.json"

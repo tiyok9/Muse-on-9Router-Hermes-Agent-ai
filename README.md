@@ -38,7 +38,7 @@ the bridge, the keys and the worker all live inside it. So the recipe lives
 from one command:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Kutuyyy/Muse-on-9Router-Hermes-Agent-ai/main/muse-bootstrap.sh | bash
+curl -fsSL https://raw.githubusercontent.com/tiyok9/Muse-on-9Router-Hermes-Agent-ai/main/muse-bootstrap.sh | bash
 ```
 
 That single script is idempotent — every step first asks "is this already done?"
