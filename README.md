@@ -64,13 +64,22 @@ prompt for that swap.
 
 | Var | Default | Purpose |
 |-----|---------|---------|
-| `MUSE_REPO_RAW` | this repo, `main` | where to fetch `bridge.py` / worker / script |
+| `MUSE_REPO_SLUG` | `tiyok9/Muse-on-9Router-Hermes-Agent-ai` | which repo to fetch from |
+| `MUSE_REPO_BRANCH` | `main` | branch to resolve to a commit SHA |
+| `MUSE_REPO_RAW` | — | force a raw base URL (skips SHA resolution) |
 | `MUSE_BRIDGE_DIR` | `$HOME/muse-bridge` | install location |
 | `MUSE_UPSTREAM` | `none` | `none` \| `hermes` \| OpenAI-compatible base URL |
 | `MUSE_KEYS_FROM` | — | `user@host:/path` to pull pinned keys over SSH |
 | `MUSE_WORKER_KEY` / `MUSE_USER_KEY` | — | pin the key strings directly |
 | `MUSE_RELAY` | — | `user@host`; enables the `ssh -R` reverse tunnel |
 | `MUSE_NO_TIMER` | `0` | `1` disables the 5-minute self-heal timer |
+
+> **Cache note.** `raw.githubusercontent.com` serves branch URLs through a CDN
+> with `Cache-Control: max-age=300`, so a branch URL can hand back a copy that is
+> up to 5 minutes stale after a push. The script resolves `main` to a commit SHA
+> and fetches by SHA (immutable, not cached that way), falling back to the branch
+> URL only if the GitHub API is unreachable. If you push a fix and re-run within
+> 5 minutes, the SHA path is what keeps you from silently re-running the old one.
 
 ---
 

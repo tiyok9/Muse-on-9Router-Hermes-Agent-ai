@@ -12,7 +12,16 @@
 # It never regenerates existing keys (that would break 9Router + Hermes configs).
 #
 # Verified vs assumed: syntax checked with `bash -n`; idempotency logic reasoned
-# from the recon in MUSE-SSH-RECON.md. NOT executed locally (user policy).
+# from the recon in MUSE-SSH-RECON.md. Executed end-to-end on a real Ubuntu
+# 24.04 host (systemd) to confirm the happy path and idempotency.
+#
+# Fetch freshness: raw.githubusercontent.com serves branch URLs through a CDN
+# with Cache-Control max-age=300, so a branch URL can hand back a stale copy for
+# up to 5 minutes after a push. Resolving the branch to a commit SHA once and
+# fetching by SHA sidesteps that (SHA URLs are immutable and not cached that way).
+# If the API is unreachable we fall back to the branch URL — a few minutes of
+# staleness is harmless for self-heal, whereas a stale *script* overwriting a
+# newer one on disk is not, which is why the SHA path is preferred.
 #
 # Env knobs (all optional):
 #   MUSE_REPO_RAW   base raw URL        (default: the public repo, main branch)
@@ -24,7 +33,12 @@
 #   MUSE_RELAY_PORT relay port to publish on              (default: 8765)
 set -euo pipefail
 
-REPO_RAW="${MUSE_REPO_RAW:-https://raw.githubusercontent.com/tiyok9/Muse-on-9Router-Hermes-Agent-ai/main}"
+# Where the recipe lives. REPO_RAW can be forced; otherwise we resolve the
+# branch to a commit SHA at run time (see the freshness note above).
+REPO_SLUG="${MUSE_REPO_SLUG:-tiyok9/Muse-on-9Router-Hermes-Agent-ai}"
+REPO_BRANCH="${MUSE_REPO_BRANCH:-main}"
+REPO_RAW="${MUSE_REPO_RAW:-}"
+BRANCH_RAW="https://raw.githubusercontent.com/$REPO_SLUG/$REPO_BRANCH"
 BRIDGE_DIR="${MUSE_BRIDGE_DIR:-$HOME/muse-bridge}"
 QUEUE_DIR="$BRIDGE_DIR/queue"
 KEYS_FILE="$BRIDGE_DIR/keys.json"
@@ -52,6 +66,23 @@ else SUDO=""; warn "bukan root dan tanpa sudo — langkah sistem akan dilewati"
 fi
 
 if command -v systemctl >/dev/null 2>&1 && [ -d /run/systemd/system ]; then HAVE_SYSTEMD=1; fi
+
+# Resolve the raw base URL once. Prefer a SHA-pinned URL (immune to the CDN's
+# 5-minute branch cache); fall back to the branch URL if the API is unavailable.
+resolve_repo_raw() {
+  if [ -n "$REPO_RAW" ]; then return 0; fi
+  local sha
+  sha="$(curl -fsSL --max-time 15 \
+          "https://api.github.com/repos/$REPO_SLUG/commits/$REPO_BRANCH" 2>/dev/null \
+        | sed -n 's/.*"sha": *"\([0-9a-f]\{40\}\)".*/\1/p' | head -1 || true)"
+  if [ -n "$sha" ]; then
+    REPO_RAW="https://raw.githubusercontent.com/$REPO_SLUG/$sha"
+    printf '  \033[90m•\033[0m sumber: %s@%s\n' "$REPO_SLUG" "${sha:0:8}"
+  else
+    REPO_RAW="$BRANCH_RAW"
+    printf '  \033[33m!\033[0m API tak terjangkau — pakai URL branch (bisa basi ≤5 menit)\n'
+  fi
+}
 
 # fetch SRC DST — download only when content actually differs (idempotent).
 # Sets FETCH_CHANGED=1 when the destination was actually replaced, so callers
@@ -128,6 +159,7 @@ if command -v node >/dev/null 2>&1; then ok "node $(node -v)"; NODE_OK=1; else w
 
 # -------------------------------------------------------- 1. bridge.py ---
 log "1. Pasang bridge.py"
+resolve_repo_raw
 fetch "$REPO_RAW/bridge.py" "$BRIDGE_DIR/bridge.py"
 BRIDGE_PAYLOAD_CHANGED="$FETCH_CHANGED"
 mkdir -p "$QUEUE_DIR"/{pending,processing,done}
@@ -426,7 +458,9 @@ After=network-online.target
 Wants=network-online.target
 [Service]
 Type=oneshot
-Environment=MUSE_REPO_RAW=$REPO_RAW
+# Deliberately NOT pinning MUSE_REPO_RAW here: the timer should re-resolve the
+# branch each run so self-heal also picks up new commits, not just re-apply an
+# old snapshot forever.
 ExecStart=/usr/bin/env bash $BRIDGE_DIR/muse-bootstrap.sh
 [Install]
 WantedBy=multi-user.target"
@@ -476,5 +510,5 @@ cat <<EOF
     python3 $BRIDGE_DIR/bridge.py keylist
 
   Script ini aman dijalankan ulang kapan saja — VM baru cukup:
-    curl -fsSL $REPO_RAW/muse-bootstrap.sh | bash
+    curl -fsSL $BRANCH_RAW/muse-bootstrap.sh | bash
 EOF
