@@ -27,14 +27,21 @@
 #                explicit approval before doing it.
 # SHELL_PORT     relay port for the VM shell       (default 2222)
 #
-# KNOWN DEAD END — Muse sandbox: outbound SSH is blocked by the runtime's own
-# egress policy, not by anything in this script. The VM sits behind an HTTP
-# proxy (hatch-egress-proxy:3128 / 198.19.0.1:3128) that refuses CONNECT to a
-# bare IP, and even with ProxyCommand=none (ssh dials the relay directly and
-# reports "Connection established") the handshake is intercepted and reset
-# with the banner "Outbound SSH is turned off for this assistant". So this
-# tunnel CANNOT work on a Muse VM — leave MUSE_RELAY unset there. Verified
-# 2026-10-02 on htch-runtime. On an ordinary VPS it works normally.
+# KNOWN CONSTRAINT — Muse sandbox: outbound SSH is DENIED BY DEFAULT by the
+# runtime's own egress policy, not by anything in this script. The VM sits
+# behind an HTTP proxy (hatch-egress-proxy:3128 / 198.19.0.1:3128) that refuses
+# CONNECT to a bare IP, and even with ProxyCommand=none (ssh dials the relay
+# directly and reports "Connection established") the handshake is intercepted
+# and reset with this banner:
+#
+#   muse: Outbound SSH is turned off for this assistant. To allow it, ask the
+#   user to open Muse settings -> Permissions -> Direct network protocols and
+#   switch ssh from Deny to Ask.
+#
+# So this is a user-flippable permission, not a wall. Ask the user to switch
+# ssh from Deny to Ask in Muse settings; once allowed, muse-tunnel's
+# Restart=always reconnects on its own within seconds — no re-run needed.
+# Verified 2026-10-02 on htch-runtime. On an ordinary VPS it works directly.
 #
 # Then, from your laptop:
 #   ssh -L 8765:127.0.0.1:8765 user@relay      # then open http://127.0.0.1:8765

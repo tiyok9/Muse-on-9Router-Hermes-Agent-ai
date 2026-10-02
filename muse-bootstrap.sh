@@ -428,14 +428,6 @@ if [ -z "$RELAY" ]; then
   skip "MUSE_RELAY tidak diisi"
 elif ! command -v ssh >/dev/null 2>&1; then
   warn "ssh tidak ada"
-elif [ -n "${HTTPS_PROXY:-${https_proxy:-}}" ]; then
-  # Sandbox runtimes (the Muse VM among them) route egress through an HTTP
-  # proxy AND block outbound SSH outright — the handshake is reset with
-  # "Outbound SSH is turned off for this assistant". Detecting the proxy is a
-  # cheap, reliable signal; failing here beats a service that retries forever.
-  warn "egress lewat proxy (${HTTPS_PROXY:-$https_proxy}) — sandbox ini memblokir SSH keluar"
-  warn "langkah tunnel dilewati; ini batas runtime, bukan cacat konfigurasi"
-  skip "muse-tunnel (tidak didukung di sandbox ber-proxy)"
 else
   # VM tidak punya sshd dan tidak bisa menerima koneksi masuk, tapi egress :22
   # terbuka (recon 2026-10-02). Jadi VM MENDIAL KELUAR ke relay; relay yang
