@@ -62,7 +62,15 @@ attempt=0
 while :; do
     attempt=$((attempt + 1))
     set +e
+    # ProxyCommand=none / ProxyJump=none defeat any ProxyCommand inherited from
+    # the system ssh_config. Some sandbox runtimes (the Muse VM among them) put
+    # an HTTP proxy in /etc/ssh/ssh_config; ssh then dials 198.19.0.1:3128 and
+    # the proxy refuses CONNECT to a bare IP, so the tunnel dies with
+    # "Connection closed by 198.19.0.1 port 3128" while plain TCP looks fine.
+    # Command-line -o wins over ssh_config, so this is the whole fix.
     ssh -N -T \
+        -o ProxyCommand=none \
+        -o ProxyJump=none \
         -o ExitOnForwardFailure=yes \
         -o ServerAliveInterval=30 \
         -o ServerAliveCountMax=3 \
