@@ -1,0 +1,40 @@
+Recon saja — jangan ubah, jangan install, jangan restart apa pun. Saya mau tahu apakah VM ini bisa dipakai untuk akses lewat SSH. Jalankan perintah di bawah dan laporkan OUTPUT MENTAHNYA per nomor, apa adanya. Jangan disimpulkan, jangan diperbaiki, jangan dirapikan.
+
+1. OS & arsitektur:
+   cat /etc/os-release | head -3
+   uname -m
+
+2. Tool SSH yang tersedia:
+   command -v ssh scp ssh-keygen ssh-agent sshd
+   ssh -V 2>&1
+
+3. Apakah VM ini menjalankan SSH server (untuk akses masuk):
+   ls -la /etc/ssh/ 2>&1 | head
+   ps -eo pid,comm | grep -i sshd || echo "TIDAK ADA proses sshd"
+   ss -tlnp 2>/dev/null | grep -E ':22\b' || echo "TIDAK listen di port 22"
+
+4. Hak akses:
+   id
+   sudo -n true 2>&1 && echo SUDO-OK || echo NO-SUDO
+
+5. Manajer paket:
+   command -v apt-get apt dnf yum apk pacman 2>/dev/null || echo "tidak ada manajer paket dikenal"
+
+6. Egress keluar port 22 (paling penting — ini penentu apakah reverse tunnel bisa):
+   timeout 6 bash -c 'cat < /dev/null > /dev/tcp/github.com/22' && echo TCP22-OK || echo TCP22-FAIL
+
+7. Egress port umum lain sebagai pembanding:
+   timeout 6 bash -c 'cat < /dev/null > /dev/tcp/1.1.1.1/443' && echo TCP443-OK || echo TCP443-FAIL
+
+8. Konfigurasi SSH yang sudah ada — PENTING: JANGAN cetak isi private key, cukup nama file dan isi config:
+   ls -la ~/.ssh/ 2>&1
+   cat ~/.ssh/config 2>&1 | head -40
+   wc -l < ~/.ssh/known_hosts 2>/dev/null || echo "known_hosts tidak ada"
+
+9. Service yang menyangkut tunnel/ssh:
+   systemctl list-units --type=service --state=running 2>/dev/null | grep -iE 'ssh|tunnel|cloudflared' || echo "tidak ada"
+
+10. Port bridge saat ini masih hidup?
+   curl -s -m 5 http://127.0.0.1:8765/health || echo "bridge tidak merespons"
+
+Laporkan sebagai blok output mentah per nomor. Kalau ada perintah yang tidak ada atau gagal, tulis pesan errornya apa adanya. Berhenti setelah recon — tunggu instruksi saya berikutnya.

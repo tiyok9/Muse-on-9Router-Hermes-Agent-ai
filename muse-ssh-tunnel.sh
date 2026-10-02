@@ -1,0 +1,79 @@
+#!/usr/bin/env bash
+# muse-ssh-tunnel.sh — publish the Muse bridge through an SSH relay YOU own.
+#
+# Shape of the solution: the Muse VM is a client-only sandbox — it cannot accept
+# inbound connections (same wall that killed the Tailscale plan). So we invert
+# it: the VM dials OUT to a relay you control with `ssh -R`, and that outbound
+# connection becomes the reachable path. No inbound port on the VM, no public
+# DNS on the VM, no third-party tunnel service.
+#
+#   [ laptop ] --ssh--> [ your relay ] <--outbound ssh-- [ Muse VM :8765 ]
+#                            ^ publishes 127.0.0.1:8765
+#
+# Usage:
+#   RELAY=user@my-vps.example.com ./muse-ssh-tunnel.sh
+#
+# Env (all optional except RELAY):
+#   RELAY          user@host of the relay            REQUIRED
+#   RELAY_PORT     sshd port on the relay            (default 22)
+#   BRIDGE_PORT    local bridge port to publish      (default 8765)
+#   REMOTE_PORT    port published on the relay       (default = BRIDGE_PORT)
+#   REMOTE_BIND    bind address on the relay         (default 127.0.0.1)
+#   SSH_KEY        private key path                  (default: ssh picks)
+# SHELL_ACCESS   "1" to also expose this VM's sshd (needs sshd listening on 22)
+#                Recon 2026-10-02: NO sshd on the Muse VM (Ubuntu 24.04.5, root
+#                + apt available, egress TCP22-OK). So SHELL_ACCESS=1 requires
+#                installing openssh-server first — a system change; get
+#                explicit approval before doing it.
+# SHELL_PORT     relay port for the VM shell       (default 2222)
+#
+# Then, from your laptop:
+#   ssh -L 8765:127.0.0.1:8765 user@relay      # then open http://127.0.0.1:8765
+#   ssh -p 2222 museuser@relay                 # a shell on the Muse VM (if SHELL_ACCESS=1)
+set -euo pipefail
+
+RELAY="${RELAY:?set RELAY=user@host — the SSH relay you control}"
+RELAY_PORT="${RELAY_PORT:-22}"
+BRIDGE_PORT="${BRIDGE_PORT:-8765}"
+REMOTE_PORT="${REMOTE_PORT:-$BRIDGE_PORT}"
+REMOTE_BIND="${REMOTE_BIND:-127.0.0.1}"
+SHELL_ACCESS="${SHELL_ACCESS:-0}"
+SHELL_PORT="${SHELL_PORT:-2222}"
+
+key_args=()
+if [[ -n "${SSH_KEY:-}" ]]; then
+    key_args=(-i "$SSH_KEY" -o IdentitiesOnly=yes)
+fi
+
+forwards=(-R "${REMOTE_BIND}:${REMOTE_PORT}:127.0.0.1:${BRIDGE_PORT}")
+if [[ "$SHELL_ACCESS" == "1" ]]; then
+    forwards+=(-R "${REMOTE_BIND}:${SHELL_PORT}:127.0.0.1:22")
+fi
+
+echo "[tunnel] bridge  -> ${RELAY} ${REMOTE_BIND}:${REMOTE_PORT} => vm:${BRIDGE_PORT}"
+if [[ "$SHELL_ACCESS" == "1" ]]; then
+    echo "[tunnel] shell   -> ${RELAY} ${REMOTE_BIND}:${SHELL_PORT} => vm:22"
+fi
+
+# Reconnect forever: a dropped tunnel must not silently leave you with a dead
+# bridge. ExitOnForwardFailure makes ssh fail fast if the relay port is taken
+# (otherwise ssh stays up looking healthy while nothing is forwarded).
+attempt=0
+while :; do
+    attempt=$((attempt + 1))
+    set +e
+    ssh -N -T \
+        -o ExitOnForwardFailure=yes \
+        -o ServerAliveInterval=30 \
+        -o ServerAliveCountMax=3 \
+        -o TCPKeepAlive=yes \
+        -o StrictHostKeyChecking=accept-new \
+        -p "$RELAY_PORT" \
+        "${key_args[@]}" \
+        "${forwards[@]}" \
+        "$RELAY"
+    rc=$?
+    set -e
+    echo "[tunnel] ssh keluar (rc=$rc) — reconnect #${attempt} dalam 5s" >&2
+    sleep 5
+done

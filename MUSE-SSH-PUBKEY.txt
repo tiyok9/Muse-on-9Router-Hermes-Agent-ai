@@ -1,0 +1,13 @@
+Satu langkah kecil, read-only. Saya butuh kunci PUBLIK VM ini supaya bisa didaftarkan di relay (server SSH milik saya).
+
+Jalankan dan cetak apa adanya:
+
+  cat ~/.ssh/id_ed25519.pub
+
+PENTING: itu file berakhiran .pub — kunci publik, aman ditampilkan. JANGAN cetak `~/.ssh/id_ed25519` (tanpa .pub) — itu private key.
+
+Lalu tambahan singkat:
+1. hostname VM ini (jalankan `hostname`)
+2. apakah /home dan /root bertahan kalau VM ini di-restart atau diganti? Saya perlu tahu karena kalau tidak persisten, keypair tadi ikut hilang dan tunnel harus didaftarkan ulang.
+
+Cukup itu. Jangan install apa pun, jangan restart apa pun.

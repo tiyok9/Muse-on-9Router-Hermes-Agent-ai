@@ -1,0 +1,26 @@
+# secrets — never commit
+keys.json
+keys.pin
+worker.env
+*.key
+
+# queue state (jobs, leases, answers)
+queue/
+processing/
+done/
+pending/
+
+# python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# logs / runtime
+*.log
+serve.log
+worker.log
+
+# windows
+Thumbs.db
+desktop.ini

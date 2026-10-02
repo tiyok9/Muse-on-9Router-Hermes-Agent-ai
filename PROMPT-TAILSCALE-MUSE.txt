@@ -1,0 +1,8 @@
+Lanjutkan setup yang tadi. Kondisi saat ini: 9router.service dan muse-bridge sudah jalan, worker cron + hook pemantau sudah dimatikan, Hermes belum terpasang. Sekarang tambahkan akses lewat Tailscale.
+
+1. Cek dulu apakah Tailscale bisa dipakai di environment ini: jalankan `tailscale version` lalu `tailscale ip -4`. Kalau belum terpasang, coba install (butuh root). Kalau tidak bisa install atau tidak bisa login, laporkan apa adanya lalu berhenti di langkah ini — jangan lanjut dengan asumsi alamat.
+2. Kalau Tailscale belum login, minta saya auth key dari admin console Tailscale (Settings > Keys). Jangan pernah tampilkan auth key itu di chat.
+3. Setelah node ini punya IP tailnet, restart muse-bridge supaya ikut listen di IP itu. bridge.py v5.1 sudah otomatis bind ke hasil `tailscale ip -4` di samping 127.0.0.1 (lihat fungsi listen_addrs), jadi cukup restart service-nya. Verifikasi log memuat dua baris "listening on": satu 127.0.0.1 dan satu IP tailnet.
+4. Uji jangkauan dan catat angkanya: `curl -s http://127.0.0.1:8765/health` dan `curl -s http://<ip-tailnet>:8765/health`, dua-duanya harus mengembalikan {"ok": true}. Kalau localhost jalan tapi IP tailnet gagal, laporkan sebagai kegagalan langkah ini.
+5. Jangan jalankan `tailscale funnel` atau `tailscale serve` tanpa konfirmasi saya — funnel membuka bridge ke internet publik, dan itu keputusan saya, bukan keputusanmu.
+6. Laporkan ringkas: versi Tailscale, IP tailnet, nama MagicDNS kalau ada, hasil tiap uji beserta angkanya, dan status muse-bridge. Tanpa menampilkan key atau token apa pun.

@@ -30,6 +30,50 @@ Because the worker **pulls** jobs outbound, the bridge never needs inbound conne
 
 ---
 
+## Self-provisioning (survives a VM swap)
+
+The Muse VM is **ephemeral** — it gets swapped or restarted at will, and 9Router,
+the bridge, the keys and the worker all live inside it. So the recipe lives
+**outside** the VM, in this repo, and a brand-new VM rebuilds the whole stack
+from one command:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Kutuyyy/Muse-on-9Router-Hermes-Agent-ai/main/muse-bootstrap.sh | bash
+```
+
+That single script is idempotent — every step first asks "is this already done?"
+and skips if so. Re-run it any time; a healthy stack reports *no changes*.
+
+| Case | What recovers it |
+|------|------------------|
+| Service died, key file lost, VM rebooted (disk intact) | `muse-bootstrap.timer` re-runs the script every 5 min |
+| VM **replaced** (fresh disk) | paste the one-liner above into the new VM's chat |
+| Want the *same* keys on the new VM | point `MUSE_KEYS_FROM` at a `keys.pin` you keep outside the VM |
+
+```bash
+# a fresh VM that must keep the SAME identity (no external reconfig needed)
+MUSE_KEYS_FROM=ubuntu@your-relay:/home/ubuntu/muse-keys.pin \
+  bash <(curl -fsSL .../muse-bootstrap.sh)
+```
+
+Nothing inside an ephemeral VM can survive its own wipe — the timer covers the
+reboot case, the one-liner covers the swap case. `VM-BARU.txt` is the paste-ready
+prompt for that swap.
+
+### Env knobs
+
+| Var | Default | Purpose |
+|-----|---------|---------|
+| `MUSE_REPO_RAW` | this repo, `main` | where to fetch `bridge.py` / worker / script |
+| `MUSE_BRIDGE_DIR` | `$HOME/muse-bridge` | install location |
+| `MUSE_UPSTREAM` | `none` | `none` \| `hermes` \| OpenAI-compatible base URL |
+| `MUSE_KEYS_FROM` | — | `user@host:/path` to pull pinned keys over SSH |
+| `MUSE_WORKER_KEY` / `MUSE_USER_KEY` | — | pin the key strings directly |
+| `MUSE_RELAY` | — | `user@host`; enables the `ssh -R` reverse tunnel |
+| `MUSE_NO_TIMER` | `0` | `1` disables the 5-minute self-heal timer |
+
+---
+
 ## Features
 
 - **OpenAI-compatible** `/v1/chat/completions` and `/v1/models` — drop-in for 9Router providers, Hermes custom models, or any OpenAI client.
@@ -45,6 +89,10 @@ Because the worker **pulls** jobs outbound, the bridge never needs inbound conne
 |------|---------|
 | `bridge.py` | The bridge (v5.1). Upload it when u paste prompt. |
 | `PROMPT.md` | Prompting to Muse.ai |
+| `muse-bootstrap.sh` | Idempotent self-provisioning setup for a fresh/ephemeral VM. |
+| `bridge-worker.py` | Pull-based worker (`--once` / `--loop`). |
+| `muse-ssh-tunnel.sh` | `ssh -R` reverse tunnel so the VM's bridge is reachable. |
+| `VM-BARU.txt` | Paste-ready prompt for a swapped VM. |
 
 ---
 

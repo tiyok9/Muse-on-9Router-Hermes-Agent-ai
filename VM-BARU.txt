@@ -1,0 +1,20 @@
+Bangun ulang stack Muse di VM ini, mandiri, dalam satu perintah.
+
+Jalankan:
+
+  curl -fsSL https://raw.githubusercontent.com/Kutuyyy/Muse-on-9Router-Hermes-Agent-ai/main/muse-bootstrap.sh | bash
+
+Itu saja. Script itu idempoten — aman dijalankan berkali-kali, dan setiap langkah
+melewati dirinya sendiri kalau sudah beres.
+
+Sesudah selesai, laporkan HANYA ini:
+  1. keluaran `curl -s http://127.0.0.1:8765/health`
+  2. keluaran `python3 ~/muse-bridge/bridge.py keylist`
+  3. status tiap service: `systemctl is-active muse-bridge muse-worker muse-bootstrap.timer 9router`
+  4. kalau ada langkah yang dilewati karena prasyarat kurang, sebutkan yang mana
+
+JANGAN tampilkan isi ~/muse-bridge/keys.json atau ~/muse-bridge/worker.env.
+Jangan install paket yang tidak diminta script. Jangan restart VM.
+
+Catatan: kalau 9router belum terpasang, script akan bilang begitu — jalankan
+`npm i -g 9router` lalu ulangi perintah di atas.
