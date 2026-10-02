@@ -245,12 +245,23 @@ os.chmod(path, 0o600)
 PY
 }
 
+# _keygen ROLE LABEL — mint a key into THIS install's keys.json.
+# bridge.py derives keys.json from BRIDGE_QUEUE (whose built-in default is
+# /home/ubuntu/muse-bridge), so BRIDGE_QUEUE must be passed explicitly. Without
+# it the key is written to that default path while the service reads
+# $BRIDGE_DIR/keys.json — the worker then holds a key the bridge has never seen
+# and every request 401s. Symptom is silent: both units report "active".
+_keygen() {
+  ( cd "$BRIDGE_DIR" && BRIDGE_QUEUE="$QUEUE_DIR" \
+      python3 bridge.py keygen --role "$1" --label "$2" 2>/dev/null )
+}
+
 if [ "$need_worker" = 1 ]; then
   if [ -n "${MUSE_WORKER_KEY:-}" ]; then
     _insert_key worker "$MUSE_WORKER_KEY" muse-vm-pinned
     WKEY="$MUSE_WORKER_KEY"; ok "worker key dipatok (${WKEY:0:14}…)"
   else
-    WKEY="$(cd "$BRIDGE_DIR" && python3 bridge.py keygen --role worker --label muse-vm 2>/dev/null)"
+    WKEY="$(_keygen worker muse-vm)"
     ok "worker key dibuat (${WKEY:0:14}…)"
   fi
 else
@@ -263,7 +274,7 @@ if [ "$need_user" = 1 ]; then
     _insert_key user "$MUSE_USER_KEY" 9router-pinned
     ok "user key dipatok (${MUSE_USER_KEY:0:14}…)"
   else
-    UKEY="$(cd "$BRIDGE_DIR" && python3 bridge.py keygen --role user --label 9router 2>/dev/null)"
+    UKEY="$(_keygen user 9router)"
     ok "user key dibuat (${UKEY:0:14}…)"
   fi
 else
@@ -278,8 +289,7 @@ if [ -z "$WKEY_FINAL" ]; then
   # only ever printed at creation — bridge.py can't show it again — so mint a
   # fresh worker key instead. Multiple worker keys are valid, so nothing breaks.
   warn "worker key tidak terbaca — terbitkan kunci worker baru"
-  WKEY_FINAL="$(cd "$BRIDGE_DIR" && python3 bridge.py keygen --role worker \
-                --label "muse-vm-$(date +%Y%m%d%H%M%S)" 2>/dev/null)"
+  WKEY_FINAL="$(_keygen worker "muse-vm-$(date +%Y%m%d%H%M%S)")"
   [ -n "$WKEY_FINAL" ] || die "gagal menerbitkan worker key"
   ok "worker key baru (${WKEY_FINAL:0:14}…)"
 fi
@@ -515,6 +525,23 @@ elif port_up "$PBRG"; then warn "port $PBRG hidup tapi /health belum OK (tunggu 
 else warn "bridge belum listen di $PBRG"; fi
 if port_up "$P9R"; then ok "9Router listen di $P9R"
 else warn "9Router belum listen di $P9R"; fi
+
+# Prove the worker key is actually accepted. Both units can report "active"
+# while every request 401s (a key minted into the wrong keys.json), so assert
+# the credential end-to-end instead of trusting the unit state.
+if [ -n "${WKEY_FINAL:-}" ]; then
+  AUTH_CODE="$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 \
+    -H "Authorization: Bearer $WKEY_FINAL" \
+    "http://127.0.0.1:$PBRG/muse/pending" 2>/dev/null || echo 000)"
+  case "$AUTH_CODE" in
+    200) ok "worker key diterima bridge (auth OK)" ;;
+    401) warn "worker key DITOLAK bridge (401) — jalankan ulang; keys.json tidak sinkron" ;;
+    000) warn "auth belum bisa diuji (bridge tidak menjawab)" ;;
+    *)   warn "auth tidak terduga: HTTP $AUTH_CODE" ;;
+  esac
+else
+  warn "worker key tidak tersedia — auth tidak diuji"
+fi
 
 log "Selesai$([ "$CHANGED" = 1 ] && echo ' (ada perubahan)' || echo ' (tidak ada perubahan — sudah sehat)')"
 cat <<EOF
