@@ -31,6 +31,12 @@
 #   MUSE_UPSTREAM   worker upstream     (default: none = smoke-test echo)
 #   MUSE_RELAY      user@host to reverse-tunnel through (enables the tunnel step)
 #   MUSE_RELAY_PORT relay port to publish on              (default: 8765)
+#   MUSE_SHELL_ACCESS 1 = also publish this VM's sshd on the relay, so you can
+#                   `ssh -p <MUSE_SHELL_PORT> root@<relay>`. Requires
+#                   openssh-server installed AND listening on :22 first.
+#   MUSE_SHELL_PORT relay port for that shell            (default: 2222)
+#   MUSE_SSH_AUTHORIZED_KEYS  public key(s) to allow into this VM's
+#                   authorized_keys when MUSE_SHELL_ACCESS=1. One per line.
 set -euo pipefail
 
 # systemd units do NOT export HOME (unlike an interactive shell). Under `set -u`
@@ -57,6 +63,8 @@ PBRG="${MUSE_PORT_BRG:-8765}"
 UPSTREAM="${MUSE_UPSTREAM:-none}"
 RELAY="${MUSE_RELAY:-}"
 RELAY_PORT="${MUSE_RELAY_PORT:-8765}"
+SHELL_ACCESS="${MUSE_SHELL_ACCESS:-0}"
+SHELL_PORT="${MUSE_SHELL_PORT:-2222}"
 UNIT_DIR="/etc/systemd/system"
 HAVE_SYSTEMD=0
 CHANGED=0
@@ -440,7 +448,37 @@ else
   else
     printf '\n  Pubkey VM (daftarkan ke %s:~/.ssh/authorized_keys):\n\n    %s\n\n' "$RELAY" "$PUB"
   fi
+  # Publishing a shell is useless if nobody can log in: the user's own public
+  # key must be in authorized_keys. Idempotent — the same key twice is a no-op.
+  # Accepts one key per line (or one single line); non-key lines are ignored.
+  if [ "$SHELL_ACCESS" = 1 ] && [ -n "${MUSE_SSH_AUTHORIZED_KEYS:-}" ]; then
+    mkdir -p "$HOME/.ssh"; chmod 700 "$HOME/.ssh"
+    AK="$HOME/.ssh/authorized_keys"; touch "$AK"; chmod 600 "$AK"
+    added=0
+    while IFS= read -r k; do
+      [ -n "$k" ] || continue
+      case "$k" in ssh-*|ecdsa-*|sk-*) ;; *) continue ;; esac
+      if ! grep -qxF -- "$k" "$AK" 2>/dev/null; then
+        printf '%s\n' "$k" >> "$AK"; added=$((added + 1))
+      fi
+    done < <(printf '%s\n' "$MUSE_SSH_AUTHORIZED_KEYS")
+    if [ "$added" -gt 0 ]; then ok "authorized_keys: $added kunci user ditambahkan"; else skip "authorized_keys sudah memuat kunci user"; fi
+  fi
   if [ "$HAVE_SYSTEMD" = 1 ]; then
+    # Only publish a shell if there is actually an sshd to reach. The tunnel
+    # runs with ExitOnForwardFailure=yes, so a forward to a dead :22 would make
+    # ssh exit and kill the WHOLE tunnel — taking the bridge down with it. So
+    # fail safe: no sshd, no shell forward, bridge keeps working.
+    SHELL_ENV=""
+    if [ "$SHELL_ACCESS" = 1 ]; then
+      if port_up 22; then
+        SHELL_ENV="Environment=SHELL_ACCESS=1
+Environment=SHELL_PORT=$SHELL_PORT"
+        ok "shell VM akan dipublikasikan: ssh -p $SHELL_PORT $(id -un)@${RELAY#*@}"
+      else
+        warn "MUSE_SHELL_ACCESS=1 tapi tidak ada sshd di :22 — shell dilewati (install openssh-server dulu)"
+      fi
+    fi
     write_unit muse-tunnel "[Unit]
 Description=Muse reverse tunnel to relay
 After=network-online.target
@@ -450,6 +488,7 @@ Environment=RELAY=$RELAY
 Environment=RELAY_PORT=22
 Environment=BRIDGE_PORT=$PBRG
 Environment=REMOTE_PORT=$RELAY_PORT
+$SHELL_ENV
 ExecStart=/usr/bin/env bash $BRIDGE_DIR/muse-ssh-tunnel.sh
 Restart=always
 RestartSec=5
