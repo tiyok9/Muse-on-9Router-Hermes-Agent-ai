@@ -91,7 +91,10 @@ force_restart() {
 # muse-bootstrap unit runs *this script*, so restarting it from inside itself
 # would kill the run mid-flight.
 write_unit() {
-  local name="$1" body="$2" path="$UNIT_DIR/$name.service" tmp changed=0
+  local name="$1" body="$2"
+  # Separate statements: `local name="$1" path="$UNIT_DIR/$name.service"` would
+  # expand $name while it is still unset, and `set -u` aborts on that.
+  local path="$UNIT_DIR/$name.service" tmp changed=0
   [ "$HAVE_SYSTEMD" = 1 ] || return 1
   tmp="$(mktemp)"; printf '%s\n' "$body" > "$tmp"
   if [ -f "$path" ] && cmp -s "$tmp" "$path"; then
