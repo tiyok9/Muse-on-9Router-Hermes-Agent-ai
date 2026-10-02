@@ -33,6 +33,15 @@
 #   MUSE_RELAY_PORT relay port to publish on              (default: 8765)
 set -euo pipefail
 
+# systemd units do NOT export HOME (unlike an interactive shell). Under `set -u`
+# every "$HOME" reference would abort the whole run — which is exactly how the
+# self-heal timer failed every tick. Derive it when it is missing.
+if [ -z "${HOME:-}" ]; then
+  HOME="$(getent passwd "$(id -u)" 2>/dev/null | cut -d: -f6 || true)"
+  [ -n "$HOME" ] || HOME="/root"
+  export HOME
+fi
+
 # Where the recipe lives. REPO_RAW can be forced; otherwise we resolve the
 # branch to a commit SHA at run time (see the freshness note above).
 REPO_SLUG="${MUSE_REPO_SLUG:-tiyok9/Muse-on-9Router-Hermes-Agent-ai}"
@@ -69,12 +78,21 @@ if command -v systemctl >/dev/null 2>&1 && [ -d /run/systemd/system ]; then HAVE
 
 # Resolve the raw base URL once. Prefer a SHA-pinned URL (immune to the CDN's
 # 5-minute branch cache); fall back to the branch URL if the API is unavailable.
+# Parsed with python3 (a hard dependency already) rather than sed, because the
+# API may return minified JSON where a greedy regex would grab the wrong "sha".
 resolve_repo_raw() {
   if [ -n "$REPO_RAW" ]; then return 0; fi
   local sha
-  sha="$(curl -fsSL --max-time 15 \
-          "https://api.github.com/repos/$REPO_SLUG/commits/$REPO_BRANCH" 2>/dev/null \
-        | sed -n 's/.*"sha": *"\([0-9a-f]\{40\}\)".*/\1/p' | head -1 || true)"
+  sha="$(python3 - "$REPO_SLUG" "$REPO_BRANCH" <<'PY' 2>/dev/null || true
+import json, sys, urllib.request
+slug, branch = sys.argv[1], sys.argv[2]
+url = f"https://api.github.com/repos/{slug}/commits/{branch}"
+req = urllib.request.Request(url, headers={"Accept": "application/vnd.github+json",
+                                           "User-Agent": "muse-bootstrap"})
+with urllib.request.urlopen(req, timeout=15) as r:
+    print(json.loads(r.read().decode())["sha"])
+PY
+)"
   if [ -n "$sha" ]; then
     REPO_RAW="https://raw.githubusercontent.com/$REPO_SLUG/$sha"
     printf '  \033[90m•\033[0m sumber: %s@%s\n' "$REPO_SLUG" "${sha:0:8}"
@@ -458,6 +476,7 @@ After=network-online.target
 Wants=network-online.target
 [Service]
 Type=oneshot
+Environment=HOME=$HOME
 # Deliberately NOT pinning MUSE_REPO_RAW here: the timer should re-resolve the
 # branch each run so self-heal also picks up new commits, not just re-apply an
 # old snapshot forever.
