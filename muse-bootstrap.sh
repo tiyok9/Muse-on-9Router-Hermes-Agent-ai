@@ -451,9 +451,17 @@ else
   # Publishing a shell is useless if nobody can log in: the user's own public
   # key must be in authorized_keys. Idempotent — the same key twice is a no-op.
   # Accepts one key per line (or one single line); non-key lines are ignored.
+  #
+  # sshd resolves `~/.ssh` from the ACCOUNT home in /etc/passwd, NOT from $HOME
+  # (which on the Muse VM is /home/hatch while root's passwd home is /root).
+  # Writing to $HOME therefore produced a shell that refused every key. Write to
+  # the passwd home of the login user — that is the directory sshd actually
+  # consults. On an ordinary VM the two are identical, so this is a no-op there.
   if [ "$SHELL_ACCESS" = 1 ] && [ -n "${MUSE_SSH_AUTHORIZED_KEYS:-}" ]; then
-    mkdir -p "$HOME/.ssh"; chmod 700 "$HOME/.ssh"
-    AK="$HOME/.ssh/authorized_keys"; touch "$AK"; chmod 600 "$AK"
+    AK_HOME="$(getent passwd "$(id -un)" 2>/dev/null | cut -d: -f6 || true)"
+    [ -n "$AK_HOME" ] || AK_HOME="$HOME"
+    mkdir -p "$AK_HOME/.ssh"; chmod 700 "$AK_HOME/.ssh"
+    AK="$AK_HOME/.ssh/authorized_keys"; touch "$AK"; chmod 600 "$AK"
     added=0
     while IFS= read -r k; do
       [ -n "$k" ] || continue
@@ -462,7 +470,7 @@ else
         printf '%s\n' "$k" >> "$AK"; added=$((added + 1))
       fi
     done < <(printf '%s\n' "$MUSE_SSH_AUTHORIZED_KEYS")
-    if [ "$added" -gt 0 ]; then ok "authorized_keys: $added kunci user ditambahkan"; else skip "authorized_keys sudah memuat kunci user"; fi
+    if [ "$added" -gt 0 ]; then ok "authorized_keys: $added kunci user ditambahkan ($AK)"; else skip "authorized_keys sudah memuat kunci user ($AK)"; fi
   fi
   if [ "$HAVE_SYSTEMD" = 1 ]; then
     # Only publish a shell if there is actually an sshd to reach. The tunnel
