@@ -484,6 +484,12 @@ Description=Muse reverse tunnel to relay
 After=network-online.target
 Wants=network-online.target
 [Service]
+# systemd does not export HOME. Without it ssh looks for the identity in
+# /root/.ssh (empty) instead of \$HOME/.ssh/id_ed25519 — the key never gets
+# offered and the relay answers \"Permission denied (publickey)\". The keypair
+# lives in \$HOME/.ssh, so HOME must be exported to match.
+Environment=HOME=$HOME
+Environment=SSH_KEY=$HOME/.ssh/id_ed25519
 Environment=RELAY=$RELAY
 Environment=RELAY_PORT=22
 Environment=BRIDGE_PORT=$PBRG
@@ -519,13 +525,24 @@ if [ "$HAVE_SYSTEMD" = 1 ] && [ "${MUSE_NO_TIMER:-0}" != "1" ]; then
   else
     skip "muse-bootstrap.sh (sudah di tempatnya)"
   fi
+  # The self-heal run must rebuild the SAME stack, so every knob that shapes it
+  # has to travel with the unit. A reset wipes muse-tunnel (and openssh-server)
+  # while leaving the timer alive; without these the timer would faithfully
+  # re-run bootstrap and still never bring the tunnel back — it would look
+  # healthy and stay dark. Carry the tunnel/re shell knobs explicitly.
+  HEAL_ENV="Environment=HOME=$HOME"
+  [ -n "$RELAY" ] && HEAL_ENV="$HEAL_ENV
+Environment=MUSE_RELAY=$RELAY"
+  [ "$SHELL_ACCESS" = "1" ] && HEAL_ENV="$HEAL_ENV
+Environment=MUSE_SHELL_ACCESS=1
+Environment=MUSE_SHELL_PORT=$SHELL_PORT"
   write_unit muse-bootstrap "[Unit]
 Description=Muse stack self-heal (re-run bootstrap)
 After=network-online.target
 Wants=network-online.target
 [Service]
 Type=oneshot
-Environment=HOME=$HOME
+$HEAL_ENV
 # Deliberately NOT pinning MUSE_REPO_RAW here: the timer should re-resolve the
 # branch each run so self-heal also picks up new commits, not just re-apply an
 # old snapshot forever.
