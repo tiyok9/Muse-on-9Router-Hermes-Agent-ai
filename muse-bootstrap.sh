@@ -122,12 +122,50 @@ PY
 # Sets FETCH_CHANGED=1 when the destination was actually replaced, so callers
 # can restart the service that consumes it (a unit file that didn't change does
 # not by itself tell systemd the payload changed).
+# api_fetch RAWURL OUT — same bytes via the GitHub contents API (base64).
+# Some VMs route egress through a proxy that blocks raw.githubusercontent.com
+# while api.github.com still works; this keeps the installer (and its self-heal
+# timer) functional there. Returns non-zero when the URL can't be derived/fetched.
+api_fetch() {
+  local url="$1" out="$2"
+  case "$url" in https://raw.githubusercontent.com/*) ;; *) return 1 ;; esac
+  # raw.githubusercontent.com/<owner>/<repo>/<ref>/<path...>
+  local rest="${url#https://raw.githubusercontent.com/}"
+  local owner="${rest%%/*}"; rest="${rest#*/}"
+  local repo="${rest%%/*}";  rest="${rest#*/}"
+  local ref="${rest%%/*}";   rest="${rest#*/}"
+  local path="$rest"
+  [ -n "$owner" ] && [ -n "$repo" ] && [ -n "$ref" ] && [ -n "$path" ] || return 1
+  python3 - "$owner" "$repo" "$ref" "$path" "$out" <<'PY' >/dev/null 2>&1
+import base64, json, sys, urllib.request
+owner, repo, ref, path, out = sys.argv[1:6]
+api = "https://api.github.com/repos/%s/%s/contents/%s?ref=%s" % (owner, repo, path, ref)
+req = urllib.request.Request(api, headers={"User-Agent": "muse-bootstrap",
+                                           "Accept": "application/vnd.github+json"})
+with urllib.request.urlopen(req, timeout=30) as r:
+    data = json.loads(r.read().decode())
+open(out, "wb").write(base64.b64decode(data["content"]))
+PY
+}
+
 fetch() {
   local src="$1" dst="$2" tmp
   FETCH_CHANGED=0
   tmp="$(mktemp)"
   if ! curl -fsSL --max-time 30 "$src" -o "$tmp"; then
-    rm -f "$tmp"; die "gagal unduh $src"
+    rm -f "$tmp"; tmp="$(mktemp)"
+    if api_fetch "$src" "$tmp"; then
+      ok "unduh via API (raw diblokir): $(basename "$dst")"
+    else
+      rm -f "$tmp"
+      # Never let a blocked CDN take down an already-installed stack: reuse the
+      # payload already on disk (persisted under $HOME) instead of aborting.
+      if [ -f "$dst" ]; then
+        warn "raw & API tak terjangkau — pakai salinan lokal $(basename "$dst")"
+        return 0
+      fi
+      die "gagal unduh $src"
+    fi
   fi
   if [ -f "$dst" ] && cmp -s "$tmp" "$dst"; then
     rm -f "$tmp"; skip "$(basename "$dst") (identik)"
