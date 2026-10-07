@@ -603,11 +603,11 @@ fi
 # repairs itself with no human in the loop. It is a no-op when everything is
 # already healthy (every step above skips).
 #
-# LIMIT, stated plainly: if the VM is *replaced* (fresh disk), this timer goes
-# with it. Nothing inside an ephemeral VM can survive its own wipe — the recipe
-# must be re-invoked from outside, which is exactly what the one-liner below is
-# for. The timer covers the reboot/corruption case; the one-liner covers the
-# swap case.
+# LIMIT, stated plainly: if /etc is wiped (a VM reset), this timer goes with it.
+# That is why step 8b ALSO registers a Muse hook under $HOME/hooks, which
+# survives the wipe and re-runs the same recipe. The timer covers the
+# reboot/corruption case; the hook covers the wipe case; the one-liner below
+# covers a brand-new VM.
 log "8. Self-heal timer"
 if [ "$HAVE_SYSTEMD" = 1 ] && [ "${MUSE_NO_TIMER:-0}" != "1" ]; then
   # Keep the recipe on disk FIRST — the unit below points at this path, and the
@@ -663,6 +663,102 @@ EOF
     || warn "gagal enable timer"
 else
   warn "systemd tidak ada / MUSE_NO_TIMER=1 — self-heal timer dilewati"
+fi
+
+# --------------------------------------------- 8b. self-heal via Muse hook ---
+# The timer above dies with /etc. Muse's own hook system does not: hooks live
+# under $HOME/hooks (which a reset keeps) and Muse re-runs them on an interval
+# as root. Registering one here means a wipe of /etc can no longer leave the
+# stack dark — Muse itself notices and rebuilds it from bootstrap.conf.
+#
+# The script is embedded rather than fetched on purpose: it must be able to
+# repair the stack even when egress is down, which is exactly the state a
+# reset tends to leave behind.
+log "8b. Self-heal via hook Muse"
+if [ "${MUSE_NO_HOOK:-0}" != "1" ] && [ -d "$HOME/hooks" ]; then
+  HOOK_SCRIPT="$HOME/hooks/scripts/muse-selfheal.sh"
+  HOOK_DEF="$HOME/hooks/definitions/muse-selfheal.json"
+  mkdir -p "$(dirname "$HOOK_SCRIPT")" "$(dirname "$HOOK_DEF")"
+
+  cat > "$HOOK_SCRIPT.tmp" <<'HOOKEOF'
+#!/usr/bin/env bash
+# Muse self-heal hook. Lives in $HOME/hooks so it survives a VM reset, unlike
+# the systemd timer in /etc/systemd/system. Muse runs it on an interval as
+# root; it repairs the stack and stays silent when everything is already fine.
+set -uo pipefail
+source "$HATCH_HOOK_RUNTIME"
+
+BRIDGE_DIR=/home/hatch/muse-bridge
+BOOT="$BRIDGE_DIR/muse-bootstrap.sh"
+LOG="$BRIDGE_DIR/selfheal.log"
+API="https://api.github.com/repos/tiyok9/Muse-on-9Router-Hermes-Agent-ai/contents/muse-bootstrap.sh"
+
+mkdir -p "$BRIDGE_DIR" 2>/dev/null || true
+exec 9>"$BRIDGE_DIR/.selfheal.lock" 2>/dev/null || true
+command -v flock >/dev/null 2>&1 && { flock -n 9 || silent "selfheal sedang berjalan" '{}'; }
+
+problems=()
+for u in muse-bridge muse-worker muse-tunnel; do
+  systemctl is-active --quiet "$u" 2>/dev/null || problems+=("$u tidak aktif")
+done
+curl -fsS -m 8 http://127.0.0.1:8765/health >/dev/null 2>&1 || problems+=("bridge /health gagal")
+ss -tln 2>/dev/null | grep -qE ':22\b' || problems+=("sshd :22 tidak listen")
+[ -f "$BOOT" ] || problems+=("resep bootstrap hilang")
+[ ${#problems[@]} -eq 0 ] && silent "stack sehat" '{}'
+
+if [ ! -f "$BOOT" ]; then
+  curl -fsSL -m 60 "$API" 2>/dev/null \
+    | python3 -c 'import sys,json,base64;sys.stdout.write(base64.b64decode(json.load(sys.stdin)["content"]).decode())' \
+    > "$BOOT" 2>/dev/null && chmod 700 "$BOOT" 2>/dev/null
+fi
+
+{
+  echo "=== selfheal $(date -Is) : ${problems[*]} ==="
+  HOME=/home/hatch bash "$BOOT"
+} >>"$LOG" 2>&1
+rc=$?
+
+payload=$(printf '%s\n' "${problems[@]}" | jq -R . | jq -cs '{problems:.}')
+if [ "$rc" -eq 0 ]; then
+  wake "stack dipulihkan otomatis" "$payload"
+else
+  wake "pemulihan otomatis GAGAL (exit $rc)" "$payload"
+fi
+HOOKEOF
+  if [ -f "$HOOK_SCRIPT" ] && cmp -s "$HOOK_SCRIPT.tmp" "$HOOK_SCRIPT"; then
+    rm -f "$HOOK_SCRIPT.tmp"; skip "hook muse-selfheal.sh (identik)"
+  else
+    mv "$HOOK_SCRIPT.tmp" "$HOOK_SCRIPT"; chmod 700 "$HOOK_SCRIPT"
+    ok "hook muse-selfheal.sh dipasang"; CHANGED=1
+  fi
+
+  # Mirror the schema of the known-good muse-bridge-queue hook exactly.
+  NOW_MS="$(($(date +%s) * 1000))"
+  cat > "$HOOK_DEF.tmp" <<EOF
+{
+  "version": 1,
+  "id": "muse-selfheal",
+  "enabled": true,
+  "script_path": "~/hooks/scripts/muse-selfheal.sh",
+  "prompt": "Self-heal untuk stack muse-bridge. Hook ini mengecek bridge/worker/tunnel/sshd dan menjalankan ulang muse-bootstrap.sh bila ada yang mati. Bila kamu terbangun karena ini, cukup laporkan singkat hasilnya ke pengguna (berhasil dipulihkan / perlu perhatian) — jangan jalankan perbaikan manual lagi.",
+  "poll_interval_secs": 60,
+  "script_timeout_secs": 300,
+  "delivery": {
+    "surface": "main"
+  },
+  "presentation_locale": "id-ID",
+  "created_at_ms": $NOW_MS,
+  "updated_at_ms": $NOW_MS
+}
+EOF
+  if [ -f "$HOOK_DEF" ] && cmp -s "$HOOK_DEF.tmp" "$HOOK_DEF"; then
+    rm -f "$HOOK_DEF.tmp"; skip "definisi hook muse-selfheal (identik)"
+  else
+    mv "$HOOK_DEF.tmp" "$HOOK_DEF"; chmod 600 "$HOOK_DEF"
+    ok "definisi hook muse-selfheal dipasang (tiap 60 dtk)"; CHANGED=1
+  fi
+else
+  warn "sistem hook Muse tidak ada / MUSE_NO_HOOK=1 — self-heal hook dilewati"
 fi
 
 # ------------------------------------------------------- 9. verifikasi ---
