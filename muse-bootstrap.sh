@@ -35,6 +35,12 @@
 #                   `ssh -p <MUSE_SHELL_PORT> root@<relay>`. Requires
 #                   openssh-server installed AND listening on :22 first.
 #   MUSE_SHELL_PORT relay port for that shell            (default: 2222)
+#   MUSE_WG_PUB_PORT relay loopback port to ALSO publish this VM's 9Router on,
+#                   so a second hop on the relay (relay-wg-bridge.service) can
+#                   re-publish it on the WireGuard hub address and every WG
+#                   peer can reach 9Router. 0/unset = off. The VM cannot join
+#                   WireGuard itself (systemd-nspawn, no CAP_NET_ADMIN), so
+#                   this reverse hop is the only WireGuard path to 9Router.
 #   MUSE_SSH_AUTHORIZED_KEYS  public key(s) to allow into this VM's
 #                   authorized_keys when MUSE_SHELL_ACCESS=1. One per line.
 set -euo pipefail
@@ -76,6 +82,7 @@ if [ -f "$CFG_FILE" ]; then
       MUSE_SHELL_PORT)   [ -n "${MUSE_SHELL_PORT:-}" ]   || MUSE_SHELL_PORT="$_v" ;;
       MUSE_PORT_9R)      [ -n "${MUSE_PORT_9R:-}" ]      || MUSE_PORT_9R="$_v" ;;
       MUSE_PORT_BRG)     [ -n "${MUSE_PORT_BRG:-}" ]     || MUSE_PORT_BRG="$_v" ;;
+      MUSE_WG_PUB_PORT)  [ -n "${MUSE_WG_PUB_PORT:-}" ]  || MUSE_WG_PUB_PORT="$_v" ;;
     esac
   done < "$CFG_FILE"
 fi
@@ -87,6 +94,7 @@ RELAY="${MUSE_RELAY:-}"
 RELAY_PORT="${MUSE_RELAY_PORT:-8765}"
 SHELL_ACCESS="${MUSE_SHELL_ACCESS:-0}"
 SHELL_PORT="${MUSE_SHELL_PORT:-2222}"
+WG_PUB_PORT="${MUSE_WG_PUB_PORT:-0}"
 
 # Remember the resolved knobs for the next (possibly bare) run.
 mkdir -p "$BRIDGE_DIR" 2>/dev/null || true
@@ -97,6 +105,7 @@ mkdir -p "$BRIDGE_DIR" 2>/dev/null || true
   printf 'MUSE_SHELL_PORT=%s\n' "$SHELL_PORT"
   printf 'MUSE_PORT_9R=%s\n' "$P9R"
   printf 'MUSE_PORT_BRG=%s\n' "$PBRG"
+  printf 'MUSE_WG_PUB_PORT=%s\n' "$WG_PUB_PORT"
 } > "$CFG_FILE" 2>/dev/null && chmod 600 "$CFG_FILE" 2>/dev/null || true
 # User keys for the published shell, persisted under $HOME so they survive a
 # reset of /etc (the self-heal timer then has nothing to remember: it re-reads
@@ -594,6 +603,20 @@ Environment=SHELL_PORT=$SHELL_PORT"
         warn "MUSE_SHELL_ACCESS=1 tapi tidak ada sshd di :22 — shell dilewati (install openssh-server dulu)"
       fi
     fi
+    # Publish this VM's 9Router on a relay loopback port too, so the relay's
+    # relay-wg-bridge.service can re-publish it on the WireGuard hub address.
+    # Guarded on 9Router actually listening, for the same reason as the shell
+    # forward: ExitOnForwardFailure=yes turns a dead forward into a dead tunnel.
+    WG_ENV=""
+    if [ "$WG_PUB_PORT" != "0" ]; then
+      if port_up "$P9R"; then
+        WG_ENV="Environment=WG_PUB_PORT=$WG_PUB_PORT
+Environment=NINER_PORT=$P9R"
+        ok "9Router akan dipublikasikan ke relay loopback :$WG_PUB_PORT (jembatan WireGuard)"
+      else
+        warn "MUSE_WG_PUB_PORT=$WG_PUB_PORT tapi 9Router tidak listen di :$P9R — forward WG dilewati"
+      fi
+    fi
     write_unit muse-tunnel "[Unit]
 Description=Muse reverse tunnel to relay
 After=network-online.target
@@ -610,6 +633,7 @@ Environment=RELAY_PORT=22
 Environment=BRIDGE_PORT=$PBRG
 Environment=REMOTE_PORT=$RELAY_PORT
 $SHELL_ENV
+$WG_ENV
 ExecStart=/usr/bin/env bash $BRIDGE_DIR/muse-ssh-tunnel.sh
 Restart=always
 RestartSec=5

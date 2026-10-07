@@ -20,6 +20,13 @@
 #   REMOTE_PORT    port published on the relay       (default = BRIDGE_PORT)
 #   REMOTE_BIND    bind address on the relay         (default 127.0.0.1)
 #   SSH_KEY        private key path                  (default: ssh picks)
+#   WG_PUB_PORT    relay loopback port to also publish THIS VM's 9Router on,
+#                  so a second hop (relay-fwd.py on the relay) can re-publish
+#                  it on the WireGuard hub address. Unset/0 = no 9Router
+#                  forward. The VM cannot join the WG network itself (it is a
+#                  systemd-nspawn container with no CAP_NET_ADMIN), so this
+#                  reverse hop is the only way to reach 9Router over WireGuard.
+#   NINER_PORT     local 9Router port to forward     (default 20128)
 # SHELL_ACCESS   "1" to also expose this VM's sshd (needs sshd listening on 22)
 #                Recon 2026-10-02: NO sshd on the Muse VM (Ubuntu 24.04.5, root
 #                + apt available, egress TCP22-OK). So SHELL_ACCESS=1 requires
@@ -55,6 +62,8 @@ REMOTE_PORT="${REMOTE_PORT:-$BRIDGE_PORT}"
 REMOTE_BIND="${REMOTE_BIND:-127.0.0.1}"
 SHELL_ACCESS="${SHELL_ACCESS:-0}"
 SHELL_PORT="${SHELL_PORT:-2222}"
+WG_PUB_PORT="${WG_PUB_PORT:-0}"
+NINER_PORT="${NINER_PORT:-20128}"
 
 key_args=()
 if [[ -n "${SSH_KEY:-}" ]]; then
@@ -65,10 +74,16 @@ forwards=(-R "${REMOTE_BIND}:${REMOTE_PORT}:127.0.0.1:${BRIDGE_PORT}")
 if [[ "$SHELL_ACCESS" == "1" ]]; then
     forwards+=(-R "${REMOTE_BIND}:${SHELL_PORT}:127.0.0.1:22")
 fi
+if [[ "$WG_PUB_PORT" != "0" && -n "$WG_PUB_PORT" ]]; then
+    forwards+=(-R "${REMOTE_BIND}:${WG_PUB_PORT}:127.0.0.1:${NINER_PORT}")
+fi
 
 echo "[tunnel] bridge  -> ${RELAY} ${REMOTE_BIND}:${REMOTE_PORT} => vm:${BRIDGE_PORT}"
 if [[ "$SHELL_ACCESS" == "1" ]]; then
     echo "[tunnel] shell   -> ${RELAY} ${REMOTE_BIND}:${SHELL_PORT} => vm:22"
+fi
+if [[ "$WG_PUB_PORT" != "0" && -n "$WG_PUB_PORT" ]]; then
+    echo "[tunnel] 9router -> ${RELAY} ${REMOTE_BIND}:${WG_PUB_PORT} => vm:${NINER_PORT} (untuk jembatan WireGuard)"
 fi
 
 # Reconnect forever: a dropped tunnel must not silently leave you with a dead
