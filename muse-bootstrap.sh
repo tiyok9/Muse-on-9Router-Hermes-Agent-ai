@@ -65,6 +65,14 @@ RELAY="${MUSE_RELAY:-}"
 RELAY_PORT="${MUSE_RELAY_PORT:-8765}"
 SHELL_ACCESS="${MUSE_SHELL_ACCESS:-0}"
 SHELL_PORT="${MUSE_SHELL_PORT:-2222}"
+# User keys for the published shell, persisted under $HOME so they survive a
+# reset of /etc (the self-heal timer then has nothing to remember: it re-reads
+# this file). Without it, a reset would bring the shell back up but refusing
+# every key, because the one-shot env var is gone.
+AK_FILE="$BRIDGE_DIR/authorized_keys.user"
+if [ -z "${MUSE_SSH_AUTHORIZED_KEYS:-}" ] && [ -s "$AK_FILE" ]; then
+  MUSE_SSH_AUTHORIZED_KEYS="$(cat "$AK_FILE")"
+fi
 UNIT_DIR="/etc/systemd/system"
 HAVE_SYSTEMD=0
 CHANGED=0
@@ -458,6 +466,10 @@ else
   # the passwd home of the login user — that is the directory sshd actually
   # consults. On an ordinary VM the two are identical, so this is a no-op there.
   if [ "$SHELL_ACCESS" = 1 ] && [ -n "${MUSE_SSH_AUTHORIZED_KEYS:-}" ]; then
+    # Persist the user keys under $HOME so the self-heal timer can re-add them
+    # after a reset without needing the original one-shot env var.
+    printf '%s\n' "$MUSE_SSH_AUTHORIZED_KEYS" > "$AK_FILE"
+    chmod 600 "$AK_FILE" 2>/dev/null || true
     AK_HOME="$(getent passwd "$(id -un)" 2>/dev/null | cut -d: -f6 || true)"
     [ -n "$AK_HOME" ] || AK_HOME="$HOME"
     mkdir -p "$AK_HOME/.ssh"; chmod 700 "$AK_HOME/.ssh"
