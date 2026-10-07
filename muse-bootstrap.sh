@@ -58,6 +58,28 @@ BRIDGE_DIR="${MUSE_BRIDGE_DIR:-$HOME/muse-bridge}"
 QUEUE_DIR="$BRIDGE_DIR/queue"
 KEYS_FILE="$BRIDGE_DIR/keys.json"
 ENV_FILE="$BRIDGE_DIR/worker.env"
+
+# ---- persist/restore the stack-shaping knobs -------------------------------
+# The self-heal timer (step 8) re-runs THIS script with no human in the loop,
+# and a reset of /etc wipes the systemd units that carried these knobs as
+# Environment=. Keep them under $HOME (which survives the reset) so a *bare*
+# re-run — from the timer, or from a Muse scheduled task — rebuilds the SAME
+# stack with zero env vars. Precedence: explicit env var > persisted file >
+# built-in default.
+CFG_FILE="$BRIDGE_DIR/bootstrap.conf"
+if [ -f "$CFG_FILE" ]; then
+  while IFS='=' read -r _k _v; do
+    case "$_k" in
+      MUSE_RELAY)        [ -n "${MUSE_RELAY:-}" ]        || MUSE_RELAY="$_v" ;;
+      MUSE_RELAY_PORT)   [ -n "${MUSE_RELAY_PORT:-}" ]   || MUSE_RELAY_PORT="$_v" ;;
+      MUSE_SHELL_ACCESS) [ -n "${MUSE_SHELL_ACCESS:-}" ] || MUSE_SHELL_ACCESS="$_v" ;;
+      MUSE_SHELL_PORT)   [ -n "${MUSE_SHELL_PORT:-}" ]   || MUSE_SHELL_PORT="$_v" ;;
+      MUSE_PORT_9R)      [ -n "${MUSE_PORT_9R:-}" ]      || MUSE_PORT_9R="$_v" ;;
+      MUSE_PORT_BRG)     [ -n "${MUSE_PORT_BRG:-}" ]     || MUSE_PORT_BRG="$_v" ;;
+    esac
+  done < "$CFG_FILE"
+fi
+
 P9R="${MUSE_PORT_9R:-20128}"
 PBRG="${MUSE_PORT_BRG:-8765}"
 UPSTREAM="${MUSE_UPSTREAM:-none}"
@@ -65,6 +87,17 @@ RELAY="${MUSE_RELAY:-}"
 RELAY_PORT="${MUSE_RELAY_PORT:-8765}"
 SHELL_ACCESS="${MUSE_SHELL_ACCESS:-0}"
 SHELL_PORT="${MUSE_SHELL_PORT:-2222}"
+
+# Remember the resolved knobs for the next (possibly bare) run.
+mkdir -p "$BRIDGE_DIR" 2>/dev/null || true
+{
+  [ -n "$RELAY" ] && printf 'MUSE_RELAY=%s\n' "$RELAY"
+  printf 'MUSE_RELAY_PORT=%s\n' "$RELAY_PORT"
+  printf 'MUSE_SHELL_ACCESS=%s\n' "$SHELL_ACCESS"
+  printf 'MUSE_SHELL_PORT=%s\n' "$SHELL_PORT"
+  printf 'MUSE_PORT_9R=%s\n' "$P9R"
+  printf 'MUSE_PORT_BRG=%s\n' "$PBRG"
+} > "$CFG_FILE" 2>/dev/null && chmod 600 "$CFG_FILE" 2>/dev/null || true
 # User keys for the published shell, persisted under $HOME so they survive a
 # reset of /etc (the self-heal timer then has nothing to remember: it re-reads
 # this file). Without it, a reset would bring the shell back up but refusing
