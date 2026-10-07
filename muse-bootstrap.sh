@@ -460,6 +460,34 @@ if [ "$NODE_OK" = 0 ]; then
   warn "node tidak ada — lewati 9Router"
 elif command -v 9router >/dev/null 2>&1 || [ -x "$HOME/.npm-global/bin/9router" ]; then
   RB="$(command -v 9router || echo "$HOME/.npm-global/bin/9router")"
+  # Canonical unit, built once. NOTE: 9router takes FLAGS, not a `serve`
+  # subcommand — `9router serve ...` prints "Exiting..." and never listens, so
+  # an earlier fallback here produced a dead gateway after every VM reset.
+  NINE_UNIT="[Unit]
+Description=9Router AI gateway (127.0.0.1:$P9R)
+After=network.target
+
+[Service]
+Type=simple
+User=$(id -un)
+Environment=HOME=$HOME
+Environment=DATA_DIR=$HOME/.9router
+ExecStart=$RB -H 127.0.0.1 -p $P9R -n --skip-update
+Restart=always
+RestartSec=5
+StandardOutput=append:$HOME/.9router/service.log
+StandardError=append:$HOME/.9router/service.log
+
+[Install]
+WantedBy=multi-user.target"
+  # Persist it under $HOME (survives a reset that wipes /etc) so the correct
+  # flags are restored, not a regenerated approximation.
+  NINE_DURABLE="$BRIDGE_DIR/systemd/9router.service"
+  mkdir -p "$(dirname "$NINE_DURABLE")"
+  if ! printf '%s\n' "$NINE_UNIT" | cmp -s - "$NINE_DURABLE" 2>/dev/null; then
+    printf '%s\n' "$NINE_UNIT" > "$NINE_DURABLE.tmp" && mv "$NINE_DURABLE.tmp" "$NINE_DURABLE"
+    chmod 600 "$NINE_DURABLE"; ok "unit 9router disimpan di \$HOME"
+  fi
   if [ -f "$UNIT_DIR/9router.service" ]; then
     # Unit already exists — do NOT overwrite it (it may carry flags we didn't
     # write). Just make sure it is enabled and alive, so a dead 9Router heals.
@@ -471,16 +499,11 @@ elif command -v 9router >/dev/null 2>&1 || [ -x "$HOME/.npm-global/bin/9router" 
       ok "9router dihidupkan kembali"
     fi
   elif [ "$HAVE_SYSTEMD" = 1 ]; then
-    write_unit 9router "[Unit]
-Description=9Router
-After=network.target
-[Service]
-ExecStart=$RB serve --port $P9R --host 127.0.0.1
-Restart=always
-RestartSec=3
-User=$(id -un)
-[Install]
-WantedBy=multi-user.target"
+    # /etc was wiped (reset) — restore the canonical unit, not a guess.
+    write_unit 9router "$NINE_UNIT"
+    if ! $SUDO systemctl is-active --quiet 9router; then
+      $SUDO systemctl start 9router >/dev/null 2>&1 || warn "gagal start 9router"
+    fi
   fi
 else
   warn "9router belum terpasang — jalankan: npm i -g 9router (lalu ulangi skrip ini)"
@@ -702,6 +725,11 @@ for u in muse-bridge muse-worker muse-tunnel; do
   systemctl is-active --quiet "$u" 2>/dev/null || problems+=("$u tidak aktif")
 done
 curl -fsS -m 8 http://127.0.0.1:8765/health >/dev/null 2>&1 || problems+=("bridge /health gagal")
+# Only police 9Router when it is actually installed — otherwise a machine
+# without it would self-heal forever over a service it never had.
+if [ -x /home/hatch/.npm-global/bin/9router ] || command -v 9router >/dev/null 2>&1; then
+  curl -fsS -m 8 http://127.0.0.1:20128/api/health >/dev/null 2>&1 || problems+=("9Router /api/health gagal")
+fi
 ss -tln 2>/dev/null | grep -qE ':22\b' || problems+=("sshd :22 tidak listen")
 [ -f "$BOOT" ] || problems+=("resep bootstrap hilang")
 [ ${#problems[@]} -eq 0 ] && silent "stack sehat" '{}'
