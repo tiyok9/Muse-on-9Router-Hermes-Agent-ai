@@ -129,8 +129,9 @@ PY
 api_fetch() {
   local url="$1" out="$2"
   case "$url" in https://raw.githubusercontent.com/*) ;; *) return 1 ;; esac
-  # raw.githubusercontent.com/<owner>/<repo>/<ref>/<path...>
+  # raw.githubusercontent.com/<owner>/<repo>/<ref>/<path...>  (>= 4 segments)
   local rest="${url#https://raw.githubusercontent.com/}"
+  case "$rest" in */*/*/*) ;; *) return 1 ;; esac
   local owner="${rest%%/*}"; rest="${rest#*/}"
   local repo="${rest%%/*}";  rest="${rest#*/}"
   local ref="${rest%%/*}";   rest="${rest#*/}"
