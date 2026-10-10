@@ -106,14 +106,19 @@ def main():
     print("[5/5] clear stale overrides ->", req(
         "PUT", f"/api/providers/{NODE_ID}/overrides", {"headers": {}}, tok))
 
-    # verifikasi — endpoint /v1 butuh Bearer API key, bukan cli token
+    # verifikasi — endpoint /v1 butuh Bearer API key, bukan cli token.
+    # NB: node openai-compatible bawaan 9Router menjawab SSE bila klien tidak
+    # minta JSON; kirim Accept: application/json + stream:false (seperti
+    # bridge-worker.py) supaya balasan murni JSON.
     print("\nVERIFIKASI")
     for model in ("muse", f"{PREFIX}/{MODELS[0]}", f"{PREFIX}/{MODELS[1]}"):
         tag = "ok" + secrets.token_hex(2)
-        data = json.dumps({"model": model, "max_tokens": 400, "messages": [
-            {"role": "user", "content": f"Reply with exactly {tag} and nothing else."}]}).encode()
+        data = json.dumps({"model": model, "stream": False, "max_tokens": 400,
+                           "messages": [{"role": "user",
+                                         "content": f"Reply with exactly {tag} and nothing else."}]}).encode()
         r = urllib.request.Request(BASE + "/v1/chat/completions", data=data)
         r.add_header("Content-Type", "application/json")
+        r.add_header("Accept", "application/json")
         r.add_header("Authorization", f"Bearer {key}")
         try:
             with urllib.request.urlopen(r, timeout=180) as x:
@@ -121,8 +126,13 @@ def main():
         except urllib.error.HTTPError as e:
             raw, st = e.read().decode(), e.code
         ok = tag in raw
-        print(f"  {model:52} HTTP {st} menjawab={ok}")
-        if not ok:
+        try:
+            json.loads(raw)          # harus murni JSON, tanpa ekor "data: [DONE]"
+            clean = True
+        except ValueError:
+            clean = False
+        print(f"  {model:52} HTTP {st} menjawab={ok} json_murni={clean}")
+        if not ok or not clean:
             print("    ", raw[:200])
             return 1
     print("\nSELESAI — provider muse aktif & combo muse lewat provider muse.")
