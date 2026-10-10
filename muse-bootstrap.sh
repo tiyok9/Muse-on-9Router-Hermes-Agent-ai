@@ -97,6 +97,10 @@ if [ -f "$CFG_FILE" ]; then
       MUSE_UPSTREAM_MODEL) [ -n "${MUSE_UPSTREAM_MODEL:-}" ] || MUSE_UPSTREAM_MODEL="$_v" ;;
       MUSE_NINE_REMOTE)  [ -n "${MUSE_NINE_REMOTE:-}" ]  || MUSE_NINE_REMOTE="$_v" ;;
       MUSE_NINE_LOCAL)   [ -n "${MUSE_NINE_LOCAL:-}" ]   || MUSE_NINE_LOCAL="$_v" ;;
+      MUSE_INFERENCE_SOCK) [ -n "${MUSE_INFERENCE_SOCK:-}" ] || MUSE_INFERENCE_SOCK="$_v" ;;
+      MUSE_SPACE_SLUG)   [ -n "${MUSE_SPACE_SLUG:-}" ]   || MUSE_SPACE_SLUG="$_v" ;;
+      MUSE_SHIM_PORT)    [ -n "${MUSE_SHIM_PORT:-}" ]    || MUSE_SHIM_PORT="$_v" ;;
+      MUSE_SHIM_MODEL)   [ -n "${MUSE_SHIM_MODEL:-}" ]   || MUSE_SHIM_MODEL="$_v" ;;
     esac
   done < "$CFG_FILE"
 fi
@@ -113,6 +117,11 @@ UPSTREAM_KEY="${MUSE_UPSTREAM_KEY:-}"
 UPSTREAM_MODEL="${MUSE_UPSTREAM_MODEL:-}"
 NINE_REMOTE="${MUSE_NINE_REMOTE:-}"
 NINE_LOCAL="${MUSE_NINE_LOCAL:-12028}"
+# Muse Spark shim (:8766) — jembatan socket inference -> HTTP OpenAI-compatible.
+MUSE_INFERENCE_SOCK="${MUSE_INFERENCE_SOCK:-/run/hatch/sandbox/space-inference.sock}"
+MUSE_SPACE_SLUG="${MUSE_SPACE_SLUG:-__probe__}"
+MUSE_SHIM_PORT="${MUSE_SHIM_PORT:-8766}"
+MUSE_SHIM_MODEL="${MUSE_SHIM_MODEL:-muse-spark-1.3}"
 
 # Remember the resolved knobs for the next (possibly bare) run.
 mkdir -p "$BRIDGE_DIR" 2>/dev/null || true
@@ -574,6 +583,53 @@ WantedBy=multi-user.target"
   fi
 else
   warn "tanpa systemd — worker manual: set -a; . $ENV_FILE; python3 $BRIDGE_DIR/bridge-worker.py --loop"
+fi
+
+# ------------------------------------------------- 6b. Muse Spark shim ---
+# Shim membuka HTTP OpenAI-compatible di :8766 dan meneruskan tiap turn ke
+# socket inference Muse (runtime `hatch`). TANPA ini, node 9Router
+# `musespark`/combo `muse` mati dengan ECONNREFUSED 127.0.0.1:8766 setiap kali
+# VM reset — jadi ia WAJIB ikut self-heal, bukan dipasang manual sekali.
+# Dijalankan SETELAH langkah 6 (worker) dan SEBELUM tunnel.
+log "6b. Muse Spark shim (:8766)"
+fetch "$REPO_RAW/muse_spark_shim.py" "$BRIDGE_DIR/muse-spark-shim.py"
+SHIM_PAYLOAD_CHANGED="$FETCH_CHANGED"
+if [ -S "$MUSE_INFERENCE_SOCK" ]; then
+  ok "socket inference OK: $MUSE_INFERENCE_SOCK"
+else
+  warn "socket $MUSE_INFERENCE_SOCK belum ada — shim dipasang, start di-skip"
+fi
+if [ "$HAVE_SYSTEMD" = 1 ]; then
+  write_unit muse-spark-shim "[Unit]
+Description=Muse Spark shim (Space inference socket -> OpenAI HTTP)
+After=network.target
+[Service]
+Type=simple
+User=$(id -un)
+Environment=HOME=$HOME
+Environment=MUSE_INFERENCE_SOCK=$MUSE_INFERENCE_SOCK
+Environment=MUSE_SPACE_SLUG=${MUSE_SPACE_SLUG:-__probe__}
+Environment=MUSE_SHIM_HOST=127.0.0.1
+Environment=MUSE_SHIM_PORT=$MUSE_SHIM_PORT
+Environment=MUSE_SHIM_MODEL=$MUSE_SHIM_MODEL
+Restart=always
+RestartSec=3
+ExecStart=/usr/bin/python3 $BRIDGE_DIR/muse-spark-shim.py
+StandardOutput=append:$BRIDGE_DIR/shim.log
+StandardError=append:$BRIDGE_DIR/shim.log
+[Install]
+WantedBy=multi-user.target"
+  # shim payload berubah → restart supaya kode terbaru dipakai
+  if [ "$SHIM_PAYLOAD_CHANGED" = 1 ]; then
+    force_restart muse-spark-shim
+  fi
+  # Sama seperti worker: shim hanya bisa hidup kalau socket inference ada.
+  # Tanpa socket, biarkan unit terpasang (enabled) tapi jangan start paksa.
+  if [ ! -S "$MUSE_INFERENCE_SOCK" ]; then
+    $SUDO systemctl stop muse-spark-shim >/dev/null 2>&1 || true
+  fi
+else
+  warn "tanpa systemd — shim manual: MUSE_SHIM_PORT=$MUSE_SHIM_PORT python3 $BRIDGE_DIR/muse-spark-shim.py"
 fi
 
 # ---------------------------------------------------------- 7. tunnel ---
