@@ -3,6 +3,15 @@ keys.json
 keys.pin
 worker.env
 *.key
+.9r.token
+token
+
+# scratch / recon notes (lokal saja)
+MUSE-*.txt
+mcp_*.py
+probe.mjs
+muse-*.py
+oc-*.mjs
 
 # queue state (jobs, leases, answers)
 queue/
