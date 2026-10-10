@@ -124,6 +124,7 @@ mkdir -p "$BRIDGE_DIR" 2>/dev/null || true
   printf 'MUSE_PORT_9R=%s\n' "$P9R"
   printf 'MUSE_PORT_BRG=%s\n' "$PBRG"
   printf 'MUSE_WG_PUB_PORT=%s\n' "$WG_PUB_PORT"
+  [ -n "$UPSTREAM" ] && [ "$UPSTREAM" != "none" ] && printf 'MUSE_UPSTREAM=%s\n' "$UPSTREAM"
   [ -n "$UPSTREAM_KEY" ]   && printf 'MUSE_UPSTREAM_KEY=%s\n' "$UPSTREAM_KEY"
   [ -n "$UPSTREAM_MODEL" ] && printf 'MUSE_UPSTREAM_MODEL=%s\n' "$UPSTREAM_MODEL"
   [ -n "$NINE_REMOTE" ]    && printf 'MUSE_NINE_REMOTE=%s\n' "$NINE_REMOTE"
