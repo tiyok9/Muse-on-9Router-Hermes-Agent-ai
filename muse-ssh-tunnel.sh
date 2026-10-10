@@ -27,6 +27,14 @@
 #                  systemd-nspawn container with no CAP_NET_ADMIN), so this
 #                  reverse hop is the only way to reach 9Router over WireGuard.
 #   NINER_PORT     local 9Router port to forward     (default 20128)
+#   NINE_REMOTE    host:port of a 9Router reachable FROM THE RELAY, e.g. your
+#                  PC's 9Router across WireGuard (10.100.0.3:20128). When set,
+#                  the tunnel ALSO opens a local forward
+#                  (127.0.0.1:NINE_LOCAL -> NINE_REMOTE) so this VM can use that
+#                  router as its LLM upstream. Empty = off. Note the asymmetry:
+#                  the VM cannot reach a WG peer itself, but it CAN reach the
+#                  relay — so the relay (already a WG peer) does the last hop.
+#   NINE_LOCAL     local port for that forward      (default 12028)
 # SHELL_ACCESS   "1" to also expose this VM's sshd (needs sshd listening on 22)
 #                Recon 2026-10-02: NO sshd on the Muse VM (Ubuntu 24.04.5, root
 #                + apt available, egress TCP22-OK). So SHELL_ACCESS=1 requires
@@ -64,6 +72,8 @@ SHELL_ACCESS="${SHELL_ACCESS:-0}"
 SHELL_PORT="${SHELL_PORT:-2222}"
 WG_PUB_PORT="${WG_PUB_PORT:-0}"
 NINER_PORT="${NINER_PORT:-20128}"
+NINE_REMOTE="${NINE_REMOTE:-}"
+NINE_LOCAL="${NINE_LOCAL:-12028}"
 
 key_args=()
 if [[ -n "${SSH_KEY:-}" ]]; then
@@ -77,6 +87,11 @@ fi
 if [[ "$WG_PUB_PORT" != "0" && -n "$WG_PUB_PORT" ]]; then
     forwards+=(-R "${REMOTE_BIND}:${WG_PUB_PORT}:127.0.0.1:${NINER_PORT}")
 fi
+# Local forward (VM -> relay -> 9Router on a WG peer). -L survives on the same
+# ssh connection, so it rides the existing unit and self-heal.
+if [[ -n "$NINE_REMOTE" ]]; then
+    forwards+=(-L "127.0.0.1:${NINE_LOCAL}:${NINE_REMOTE}")
+fi
 
 echo "[tunnel] bridge  -> ${RELAY} ${REMOTE_BIND}:${REMOTE_PORT} => vm:${BRIDGE_PORT}"
 if [[ "$SHELL_ACCESS" == "1" ]]; then
@@ -84,6 +99,9 @@ if [[ "$SHELL_ACCESS" == "1" ]]; then
 fi
 if [[ "$WG_PUB_PORT" != "0" && -n "$WG_PUB_PORT" ]]; then
     echo "[tunnel] 9router -> ${RELAY} ${REMOTE_BIND}:${WG_PUB_PORT} => vm:${NINER_PORT} (untuk jembatan WireGuard)"
+fi
+if [[ -n "$NINE_REMOTE" ]]; then
+    echo "[tunnel] upstream -> vm:${NINE_LOCAL} => ${NINE_REMOTE} (lewat relay)"
 fi
 
 # Reconnect forever: a dropped tunnel must not silently leave you with a dead

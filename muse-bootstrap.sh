@@ -29,6 +29,15 @@
 #   MUSE_PORT_9R    9Router port        (default: 20128)
 #   MUSE_PORT_BRG   bridge port         (default: 8765)
 #   MUSE_UPSTREAM   worker upstream     (default: none = smoke-test echo)
+#   MUSE_UPSTREAM_KEY   API key for that upstream (written to worker.env, 600).
+#                   Kept in bootstrap.conf too, so a /etc reset does not lose it.
+#   MUSE_UPSTREAM_MODEL model name to request from the upstream.
+#   MUSE_NINE_REMOTE   host:port of a 9Router reachable FROM THE RELAY — e.g.
+#                   your PC's 9Router across WireGuard (10.100.0.3:20128). The
+#                   tunnel then opens 127.0.0.1:MUSE_NINE_LOCAL on the VM
+#                   pointing at it, so the VM can use that router as its brain
+#                   without joining WireGuard itself (it can't — nspawn).
+#   MUSE_NINE_LOCAL    local port for that forward     (default 12028)
 #   MUSE_RELAY      user@host to reverse-tunnel through (enables the tunnel step)
 #   MUSE_RELAY_PORT relay port to publish on              (default: 8765)
 #   MUSE_SHELL_ACCESS 1 = also publish this VM's sshd on the relay, so you can
@@ -83,6 +92,11 @@ if [ -f "$CFG_FILE" ]; then
       MUSE_PORT_9R)      [ -n "${MUSE_PORT_9R:-}" ]      || MUSE_PORT_9R="$_v" ;;
       MUSE_PORT_BRG)     [ -n "${MUSE_PORT_BRG:-}" ]     || MUSE_PORT_BRG="$_v" ;;
       MUSE_WG_PUB_PORT)  [ -n "${MUSE_WG_PUB_PORT:-}" ]  || MUSE_WG_PUB_PORT="$_v" ;;
+      MUSE_UPSTREAM)     [ -n "${MUSE_UPSTREAM:-}" ]     || MUSE_UPSTREAM="$_v" ;;
+      MUSE_UPSTREAM_KEY) [ -n "${MUSE_UPSTREAM_KEY:-}" ] || MUSE_UPSTREAM_KEY="$_v" ;;
+      MUSE_UPSTREAM_MODEL) [ -n "${MUSE_UPSTREAM_MODEL:-}" ] || MUSE_UPSTREAM_MODEL="$_v" ;;
+      MUSE_NINE_REMOTE)  [ -n "${MUSE_NINE_REMOTE:-}" ]  || MUSE_NINE_REMOTE="$_v" ;;
+      MUSE_NINE_LOCAL)   [ -n "${MUSE_NINE_LOCAL:-}" ]   || MUSE_NINE_LOCAL="$_v" ;;
     esac
   done < "$CFG_FILE"
 fi
@@ -95,6 +109,10 @@ RELAY_PORT="${MUSE_RELAY_PORT:-8765}"
 SHELL_ACCESS="${MUSE_SHELL_ACCESS:-0}"
 SHELL_PORT="${MUSE_SHELL_PORT:-2222}"
 WG_PUB_PORT="${MUSE_WG_PUB_PORT:-0}"
+UPSTREAM_KEY="${MUSE_UPSTREAM_KEY:-}"
+UPSTREAM_MODEL="${MUSE_UPSTREAM_MODEL:-}"
+NINE_REMOTE="${MUSE_NINE_REMOTE:-}"
+NINE_LOCAL="${MUSE_NINE_LOCAL:-12028}"
 
 # Remember the resolved knobs for the next (possibly bare) run.
 mkdir -p "$BRIDGE_DIR" 2>/dev/null || true
@@ -106,6 +124,10 @@ mkdir -p "$BRIDGE_DIR" 2>/dev/null || true
   printf 'MUSE_PORT_9R=%s\n' "$P9R"
   printf 'MUSE_PORT_BRG=%s\n' "$PBRG"
   printf 'MUSE_WG_PUB_PORT=%s\n' "$WG_PUB_PORT"
+  [ -n "$UPSTREAM_KEY" ]   && printf 'MUSE_UPSTREAM_KEY=%s\n' "$UPSTREAM_KEY"
+  [ -n "$UPSTREAM_MODEL" ] && printf 'MUSE_UPSTREAM_MODEL=%s\n' "$UPSTREAM_MODEL"
+  [ -n "$NINE_REMOTE" ]    && printf 'MUSE_NINE_REMOTE=%s\n' "$NINE_REMOTE"
+  printf 'MUSE_NINE_LOCAL=%s\n' "$NINE_LOCAL"
 } > "$CFG_FILE" 2>/dev/null && chmod 600 "$CFG_FILE" 2>/dev/null || true
 # User keys for the published shell, persisted under $HOME so they survive a
 # reset of /etc (the self-heal timer then has nothing to remember: it re-reads
@@ -395,6 +417,15 @@ if [ -z "${MUSE_UPSTREAM+set}" ] && [ -f "$ENV_FILE" ]; then
   PREV="$(grep -E '^UPSTREAM=' "$ENV_FILE" 2>/dev/null | cut -d= -f2- || true)"
   if [ -n "$PREV" ]; then UPSTREAM="$PREV"; fi
 fi
+# Same for the key and model: a knob in bootstrap.conf (or an env var on the
+# command line) wins; otherwise keep whatever worker.env already holds, so a
+# hand-edit is not silently reverted by the self-heal timer.
+if [ -z "$UPSTREAM_KEY" ] && [ -f "$ENV_FILE" ]; then
+  UPSTREAM_KEY="$(grep -E '^UPSTREAM_KEY=' "$ENV_FILE" 2>/dev/null | cut -d= -f2- || true)"
+fi
+if [ -z "$UPSTREAM_MODEL" ] && [ -f "$ENV_FILE" ]; then
+  UPSTREAM_MODEL="$(grep -E '^UPSTREAM_MODEL=' "$ENV_FILE" 2>/dev/null | cut -d= -f2- || true)"
+fi
 umask 077
 # Write to a temp file first so we can tell whether the content really changed;
 # a changed worker key or UPSTREAM must restart the worker (the unit file itself
@@ -406,6 +437,8 @@ BRIDGE_URL=http://127.0.0.1:$PBRG
 BRIDGE_WORKER_KEY=$WKEY_FINAL
 WORKER_LABEL=muse-vm
 UPSTREAM=$UPSTREAM
+UPSTREAM_KEY=$UPSTREAM_KEY
+UPSTREAM_MODEL=${UPSTREAM_MODEL:-muse}
 POLL_INTERVAL=3
 REQUEST_TIMEOUT=120
 WATCH_DIR=$QUEUE_DIR/pending
@@ -617,6 +650,15 @@ Environment=NINER_PORT=$P9R"
         warn "MUSE_WG_PUB_PORT=$WG_PUB_PORT tapi 9Router tidak listen di :$P9R — forward WG dilewati"
       fi
     fi
+    # Local forward to a 9Router that lives on a WireGuard peer (your PC),
+    # reached via the relay. Unlike the reverse hop this needs no local listener
+    # to exist yet, so it is wired up whenever the knob is set.
+    NINE_ENV=""
+    if [ -n "$NINE_REMOTE" ]; then
+      NINE_ENV="Environment=NINE_REMOTE=$NINE_REMOTE
+Environment=NINE_LOCAL=$NINE_LOCAL"
+      ok "upstream 9Router -> vm:127.0.0.1:$NINE_LOCAL => $NINE_REMOTE (lewat relay)"
+    fi
     write_unit muse-tunnel "[Unit]
 Description=Muse reverse tunnel to relay
 After=network-online.target
@@ -634,6 +676,7 @@ Environment=BRIDGE_PORT=$PBRG
 Environment=REMOTE_PORT=$RELAY_PORT
 $SHELL_ENV
 $WG_ENV
+$NINE_ENV
 ExecStart=/usr/bin/env bash $BRIDGE_DIR/muse-ssh-tunnel.sh
 Restart=always
 RestartSec=5
