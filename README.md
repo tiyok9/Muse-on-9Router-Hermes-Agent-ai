@@ -30,6 +30,46 @@ Because the worker **pulls** jobs outbound, the bridge never needs inbound conne
 
 ---
 
+## Muse Spark as a real provider (no login, no cost)
+
+The bridge above works with *any* agent answering as Muse. But the Muse VM itself
+already runs the **real Muse runtime** (`hatch`), which owns a local inference
+socket:
+
+```
+/run/hatch/sandbox/space-inference.sock   # length-prefixed JSON frames
+```
+
+That socket serves the user's **genuine Muse Spark** model — no Meta login, no
+OAuth, no API key, no billing. `scripts/muse_spark_shim.py` translates it into a
+plain OpenAI endpoint (`http://127.0.0.1:8766/v1`) so 9Router can use it as a
+normal provider:
+
+```
+[PC] 9Router  combo `muse`
+  -> node `musespark`  http://10.100.0.1:22028/v1   (9Router VM, via WireGuard)
+  -> [VM] 9Router      http://127.0.0.1:8766/v1
+  -> shim              muse-spark-shim.service
+  -> /run/hatch/sandbox/space-inference.sock
+  -> Muse Spark (Meta)  ← the user's real Muse AI
+```
+
+Install inside the Muse VM (idempotent, survives reboot):
+
+```bash
+scp scripts/{muse_spark_shim.py,muse-spark-shim.service,install-muse-spark-shim.sh} musevm:/tmp/
+ssh musevm 'sudo bash /tmp/install-muse-spark-shim.sh'
+```
+
+Then point the 9Router PC at it (key is read from `MUSE_VM_KEY`, never stored):
+
+```bash
+MUSE_VM_KEY=<9Router-VM-key> python scripts/nine-router-muse-spark.py
+```
+
+Verify: `curl :20128/v1/chat/completions -d '{"model":"muse",...}'` must answer
+with `"model":"Muse Spark"`.
+
 ## Self-provisioning (survives a VM swap)
 
 The Muse VM is **ephemeral** — it gets swapped or restarted at will, and 9Router,

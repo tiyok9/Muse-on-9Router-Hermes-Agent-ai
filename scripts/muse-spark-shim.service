@@ -1,0 +1,21 @@
+[Unit]
+Description=Muse Spark shim (Space inference socket -> OpenAI HTTP)
+After=network.target
+
+[Service]
+Type=simple
+User=root
+Environment=HOME=/home/hatch
+Environment=MUSE_INFERENCE_SOCK=/run/hatch/sandbox/space-inference.sock
+Environment=MUSE_SPACE_SLUG=__probe__
+Environment=MUSE_SHIM_HOST=127.0.0.1
+Environment=MUSE_SHIM_PORT=8766
+Environment=MUSE_SHIM_MODEL=muse-spark-1.3
+Restart=always
+RestartSec=3
+ExecStart=/usr/bin/python3 /home/hatch/muse-bridge/muse-spark-shim.py
+StandardOutput=append:/home/hatch/muse-bridge/shim.log
+StandardError=append:/home/hatch/muse-bridge/shim.log
+
+[Install]
+WantedBy=multi-user.target
