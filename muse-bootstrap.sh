@@ -845,10 +845,13 @@ exec 9>"$BRIDGE_DIR/.selfheal.lock" 2>/dev/null || true
 command -v flock >/dev/null 2>&1 && { flock -n 9 || silent "selfheal sedang berjalan" '{}'; }
 
 problems=()
-for u in muse-bridge muse-worker muse-tunnel; do
+for u in muse-bridge muse-worker muse-tunnel muse-spark-shim; do
   systemctl is-active --quiet "$u" 2>/dev/null || problems+=("$u tidak aktif")
 done
 curl -fsS -m 8 http://127.0.0.1:8765/health >/dev/null 2>&1 || problems+=("bridge /health gagal")
+# Shim Muse Spark (:8766) — node 9Router `musespark`/combo `muse` bergantung
+# padanya; tanpa cek ini ia bisa mati diam-diam dan combo balas 503.
+curl -fsS -m 8 http://127.0.0.1:8766/health >/dev/null 2>&1 || problems+=("shim Muse Spark /health gagal")
 # Only police 9Router when it is actually installed — otherwise a machine
 # without it would self-heal forever over a service it never had.
 if [ -x /home/hatch/.npm-global/bin/9router ] || command -v 9router >/dev/null 2>&1; then
