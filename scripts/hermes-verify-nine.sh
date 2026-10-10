@@ -85,7 +85,36 @@ ck "unit menyuntik \$NINE_ENV"  1 "$(has '$NINE_ENV' "$(cat "$UB")")"
 ck "unit tetap punya ExecStart" 1 "$(has 'ExecStart=/usr/bin/env bash' "$(cat "$UB")")"
 ck "unit tetap punya WantedBy"  1 "$(has 'WantedBy=multi-user.target' "$(cat "$UB")")"
 
-rm -f "$FB" "$PB" "$WB" "$WOUT" "$UB"; rm -rf "$BD"
+echo
+echo "== F. persist knob ke bootstrap.conf (kode ASLI) =="
+SB="$(mktemp)"
+awk '/^mkdir -p "\$BRIDGE_DIR"/{p=1} p{print} p&&/^} > "\$CFG_FILE"/{exit}' "$BOOT" > "$SB"
+ck "blok persist diekstrak" 1 "$(has 'MUSE_UPSTREAM' "$(cat "$SB")")"
+# Runs the block under `set -euo pipefail` like the real script: a bare
+# `[ -n "" ] && printf` at the end of a group would abort a naive rewrite, so
+# this is exactly the failure mode worth pinning down.
+persist() { # persist <UPSTREAM> -> isi bootstrap.conf yang dihasilkan
+  local d; d="$(mktemp -d)"
+  ( set -euo pipefail
+    BRIDGE_DIR="$d"; CFG_FILE="$d/bootstrap.conf"
+    RELAY=u@h; RELAY_PORT=8765; SHELL_ACCESS=1; SHELL_PORT=2222
+    P9R=20128; PBRG=8765; WG_PUB_PORT=22028
+    UPSTREAM="$1"; UPSTREAM_KEY=sk-k; UPSTREAM_MODEL=muse
+    NINE_REMOTE=10.100.0.3:20128; NINE_LOCAL=12028
+    source "$SB" ) >/dev/null 2>&1
+  cat "$d/bootstrap.conf" 2>/dev/null; rm -rf "$d"
+}
+c="$(persist http://127.0.0.1:12028/v1)"
+ck "persist: MUSE_UPSTREAM ditulis"     1 "$(has 'MUSE_UPSTREAM=http://127.0.0.1:12028/v1' "$c")"
+ck "persist: MUSE_UPSTREAM_KEY ditulis" 1 "$(has 'MUSE_UPSTREAM_KEY=sk-k' "$c")"
+ck "persist: MUSE_UPSTREAM_MODEL"       1 "$(has 'MUSE_UPSTREAM_MODEL=muse' "$c")"
+ck "persist: MUSE_NINE_REMOTE ditulis"  1 "$(has 'MUSE_NINE_REMOTE=10.100.0.3:20128' "$c")"
+ck "persist: MUSE_NINE_LOCAL ditulis"   1 "$(has 'MUSE_NINE_LOCAL=12028' "$c")"
+c="$(persist none)"
+ck "persist: upstream 'none' TIDAK ditulis" 0 "$(printf '%s\n' "$c" | grep -c '^MUSE_UPSTREAM=')"
+ck "persist: key tetap ditulis saat none"   1 "$(has 'MUSE_UPSTREAM_KEY=sk-k' "$c")"
+
+rm -f "$FB" "$PB" "$WB" "$WOUT" "$UB" "$SB"; rm -rf "$BD"
 echo
 printf '== HASIL: %d PASS, %d FAIL ==\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
