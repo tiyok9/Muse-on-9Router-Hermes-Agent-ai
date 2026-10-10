@@ -603,6 +603,7 @@ if [ "$HAVE_SYSTEMD" = 1 ]; then
   write_unit muse-spark-shim "[Unit]
 Description=Muse Spark shim (Space inference socket -> OpenAI HTTP)
 After=network.target
+
 [Service]
 Type=simple
 User=$(id -un)
@@ -617,6 +618,7 @@ RestartSec=3
 ExecStart=/usr/bin/python3 $BRIDGE_DIR/muse-spark-shim.py
 StandardOutput=append:$BRIDGE_DIR/shim.log
 StandardError=append:$BRIDGE_DIR/shim.log
+
 [Install]
 WantedBy=multi-user.target"
   # shim payload berubah → restart supaya kode terbaru dipakai
