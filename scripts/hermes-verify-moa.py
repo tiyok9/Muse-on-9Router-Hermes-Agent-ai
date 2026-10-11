@@ -31,7 +31,7 @@ BASE = os.environ.get("NINE_ROUTER_BASE", "http://127.0.0.1:20128")
 
 PRESET = os.environ.get("MOA_PRESET", "multi")
 REFS = ["anti", "codebudy", "agnes"]
-AGG = os.environ.get("MOA_AGG", "anti")
+AGG = os.environ.get("MOA_AGG", "gemini")
 
 results = []
 
@@ -92,6 +92,9 @@ if preset:
           preset["aggregator"]["provider"] == "custom"
           and preset["aggregator"]["model"] == AGG,
           "%s:%s" % (preset["aggregator"]["provider"], preset["aggregator"]["model"]))
+    check("aggregator != reference (independensi MoA)",
+          preset["aggregator"]["model"] not in got_refs,
+          "aggregator '%s' juga ada di reference" % preset["aggregator"]["model"])
 
 section("C. RESOLUSI RUNTIME SLOT")
 try:
