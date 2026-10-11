@@ -2,18 +2,19 @@
 """hermes-verify-moa — verifikasi Hermes multi-agent (Mixture of Agents).
 
 Memeriksa bahwa Hermes dikonfigurasi sebagai multi-agent memakai combo 9Router
-`anti`, `codebudy`, `agnes` (penasihat) + aggregator (default `anti`).
-Read-only: hanya membaca config + memanggil endpoint; tidak menulis apa pun.
+sebagai penasihat (default `anti`, `muse`, `agnes`) + aggregator (default
+`codebudy`). Read-only: hanya membaca config + memanggil endpoint.
 
   A. config    : model.provider == moa, model.default == <preset>
-  B. preset    : preset berisi ref anti/codebudy/agnes + aggregator
+  B. preset    : preset berisi ref (anti/muse/agnes) + aggregator
   C. runtime   : tiap slot resolve ke provider custom + base_url 9Router
   D. combo     : keempat combo benar-benar ada di /v1/models 9Router
   E. cli       : `hermes moa list` menampilkan preset sebagai default
   F. backup    : ada backup config sebelum MoA diubah
 
 Usage: python scripts/hermes-verify-moa.py
-Env  : MOA_AGG=<nama aggregator> (default: anti)
+Env  : MOA_AGG=<nama aggregator>   (default: codebudy)
+       MOA_REFS=<ref1,ref2,...>    (default: anti,muse,agnes)
 Exit : 0 = semua lulus, 1 = ada yang gagal.
 """
 import json
@@ -30,8 +31,9 @@ CONFIG = os.path.join(HOME, "config.yaml")
 BASE = os.environ.get("NINE_ROUTER_BASE", "http://127.0.0.1:20128")
 
 PRESET = os.environ.get("MOA_PRESET", "multi")
-REFS = ["anti", "codebudy", "agnes"]
-AGG = os.environ.get("MOA_AGG", "gemini")
+REFS = [s.strip() for s in os.environ.get(
+    "MOA_REFS", "anti,muse,agnes").split(",") if s.strip()]
+AGG = os.environ.get("MOA_AGG", "codebudy")
 
 results = []
 
